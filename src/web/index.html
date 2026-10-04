@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-bus</title>
+<link rel="icon" href="data:,">
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a64; --line: #e3e1da;
+  --accent: #2f6f5e; --accent-ink: #ffffff; --warn: #a4462f; --msg: #eef4f1; --mine: #fbf3e4;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #151614; --panel: #1d1f1c; --ink: #e8e6df; --muted: #9a988f; --line: #2e302c;
+    --accent: #6fbfa6; --accent-ink: #10201b; --warn: #e08a72; --msg: #1f2b27; --mine: #2b261c;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 var(--sans); }
+header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+header h1 { font: 600 15px var(--mono); margin: 0; letter-spacing: -0.02em; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); flex: none; }
+.dot.on { background: var(--accent); }
+#status { color: var(--muted); font-size: 12px; }
+header .grow { flex: 1; }
+button, select, input, textarea { font: inherit; color: inherit; }
+button { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+main { display: grid; grid-template-columns: minmax(280px, 380px) 1fr; gap: 16px; padding: 16px 20px; max-width: 1500px; margin: 0 auto; }
+@media (max-width: 820px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+section > h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+section > h2 .grow { flex: 1; }
+#sessions { list-style: none; margin: 0; padding: 0; }
+#sessions ul li { padding: 10px 14px; border-top: 1px solid var(--line); }
+#sessions ul li.self { background: var(--mine); }
+.row { display: flex; align-items: baseline; gap: 8px; }
+.name { font: 600 13px var(--mono); }
+.tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+.small { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.mono { font-family: var(--mono); }
+.follow { margin-left: auto; border: 0; background: none; padding: 0 2px; font-size: 16px; color: var(--muted); line-height: 1; }
+.follow.on { color: var(--accent); }
+.meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.meta span { font: 11px var(--mono); background: var(--bg); border-radius: 4px; padding: 1px 5px; }
+.note { margin-top: 4px; }
+#feed-wrap { display: flex; flex-direction: column; height: calc(100vh - 92px); min-height: 420px; }
+@media (max-width: 820px) { #feed-wrap { height: 70vh; } }
+#feed { flex: 1; overflow-y: auto; padding: 6px 0; }
+.ev { display: grid; grid-template-columns: 64px 1fr; gap: 10px; padding: 4px 14px; }
+.ev time { font: 11px var(--mono); color: var(--muted); padding-top: 2px; }
+.ev .body { min-width: 0; overflow-wrap: anywhere; }
+.ev.quiet .body { color: var(--muted); }
+.ev.send .text { background: var(--msg); border-radius: 8px; padding: 6px 10px; margin-top: 3px; white-space: pre-wrap; }
+.ev.tome .text { background: var(--mine); }
+.filters { display: flex; gap: 10px; align-items: center; font-size: 12px; text-transform: none; letter-spacing: 0; color: var(--muted); }
+.filters label { display: flex; gap: 4px; align-items: center; }
+form { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+form select, form input, form textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+form textarea { flex: 1; min-width: 200px; resize: vertical; min-height: 36px; height: 36px; }
+#dir { width: 220px; }
+#err { color: var(--warn); font-size: 12px; width: 100%; }
+#err:empty { display: none; }
+.empty { padding: 14px; color: var(--muted); }
+.group { border-bottom: 1px solid var(--line); }
+.group:last-child { border-bottom: 0; }
+.group-head { display: flex; align-items: baseline; gap: 6px; padding: 8px 14px; cursor: pointer; background: var(--bg); }
+.group-head:hover, .pick:hover { background: var(--msg); }
+.group-head .path { font: 12px var(--mono); color: var(--muted); overflow-wrap: anywhere; flex: 1; min-width: 0; }
+.group-head .path b { color: var(--ink); font-weight: 600; }
+.caret { border: 0; background: none; padding: 0 2px; color: var(--muted); width: 16px; }
+.group.closed > ul { display: none; }
+.pick { cursor: pointer; }
+.sel { box-shadow: inset 3px 0 0 var(--accent); }
+.group-head.sel { background: var(--msg); }
+#sessions li.gone { opacity: 0.55; }
+#sessions ul { list-style: none; margin: 0; padding: 0; }
+.link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.link:hover { color: var(--accent); }
+#focus { padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--bg); }
+#focus[hidden] { display: none; }
+#focus .row { flex-wrap: wrap; }
+#focus .actions { margin-left: auto; display: flex; gap: 6px; }
+#focus .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+#focus .chips span { font: 12px var(--mono); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; background: var(--panel); }
+.ev[hidden] { display: none; }
+.ev.send .dir:empty { display: none; }
+button:disabled { opacity: 0.45; cursor: default; }
+.ev.send .dir { font: 11px var(--mono); color: var(--muted); margin-right: 4px; }
+.ev.out .text { border-left: 3px solid var(--accent); }
+.ev.in .text { border-left: 3px solid var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>agent-bus</h1>
+  <span id="status">connecting</span>
+  <span class="grow"></span>
+  <button id="notify" type="button" title="Notify on messages to you or from followed sessions">Notifications</button>
+</header>
+<main>
+  <section>
+    <h2><span>Sessions</span><span class="grow"></span>
+      <span class="filters"><label title="Sessions that left the bus but still have events in the feed"><input type="checkbox" id="show-gone"> departed</label></span>
+      <span id="count"></span></h2>
+    <ul id="sessions"></ul>
+  </section>
+  <section id="feed-wrap">
+    <h2>
+      <span>Events</span><span class="grow"></span>
+      <span class="filters">
+        <label><input type="checkbox" id="only-followed"> followed only</label>
+        <label><input type="checkbox" id="show-quiet" checked> reads</label>
+        <button id="clear" type="button">Clear</button>
+      </span>
+    </h2>
+    <div id="focus" hidden></div>
+    <div id="feed"></div>
+    <form id="send">
+      <select id="target"></select>
+      <input id="dir" placeholder="directory" hidden>
+      <textarea id="text" placeholder="Message (Enter sends, Shift+Enter for a new line)"></textarea>
+      <button class="primary" type="submit">Send</button>
+      <div id="err"></div>
+    </form>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const state = {
+  self: "", selfName: "", sessions: [], followed: new Set(), live: false,
+  // Every session seen in the feed or the listing, by id, so departed ones stay clickable.
+  known: new Map(),
+  // What the feed shows: null for everything, {kind: "session", id} or {kind: "dir", path}.
+  focus: null,
+  closed: new Set(),
+};
+try { state.followed = new Set(JSON.parse(localStorage.getItem("followed") || "[]")); } catch {}
+try { state.closed = new Set(JSON.parse(localStorage.getItem("closed") || "[]")); } catch {}
+try { $("show-gone").checked = localStorage.getItem("showGone") === "1"; } catch {}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function store(k, v) { try { localStorage.setItem(k, v); } catch {} }
+function saveFollowed() { store("followed", JSON.stringify([...state.followed])); }
+function ago(t) {
+  const s = Math.max(0, Math.round(Date.now() / 1000 - t));
+  return s < 120 ? s + "s" : s < 7200 ? Math.round(s / 60) + "m" : Math.round(s / 3600) + "h";
+}
+function key(s) { return s.name; }
+function basename(p) { return p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p; }
+
+// known records what the feed tells about session id, and counts its traffic.
+function knownOf(id, name) {
+  let k = state.known.get(id);
+  if (!k) {
+    k = { id, name: name || id, harness: "", cwd: "", note: "", meta: {}, gone: false, sent: 0, received: 0, last: 0 };
+    state.known.set(id, k);
+  }
+  return k;
+}
+function learn(ev) {
+  if (!ev.id) return;
+  const k = knownOf(ev.id, ev.name);
+  if (ev.name) k.name = ev.name;
+  if (ev.harness) k.harness = ev.harness;
+  if (ev.cwd) k.cwd = ev.cwd;
+  if (ev.type === "note") k.note = ev.note || "";
+  if (ev.type === "meta") k.meta = ev.meta || {};
+  if (ev.type === "register" || ev.type === "update") k.gone = false;
+  if (ev.type === "unregister" || ev.type === "drop") k.gone = true;
+  k.last = Math.max(k.last, ev.time);
+  if (ev.type === "send") {
+    k.sent++;
+    (ev.to_ids || []).forEach((id, i) => {
+      const r = knownOf(id, (ev.to || [])[i]);
+      r.received++;
+      r.last = Math.max(r.last, ev.time);
+    });
+  }
+}
+function resetKnown() {
+  for (const k of state.known.values()) { k.sent = 0; k.received = 0; k.last = 0; }
+}
+
+async function loadSessions() {
+  const r = await fetch("/api/sessions");
+  if (!r.ok) return;
+  const data = await r.json();
+  state.self = data.self;
+  state.selfName = (data.sessions.find((x) => x.self) || {}).name || "";
+  state.sessions = data.sessions;
+  const active = new Set();
+  for (const s of data.sessions) {
+    active.add(s.id);
+    Object.assign(knownOf(s.id, s.name), { name: s.name, harness: s.harness, cwd: s.cwd, note: s.note, meta: s.meta || {}, gone: false, live: s });
+  }
+  for (const k of state.known.values()) if (!active.has(k.id)) { k.gone = true; k.live = null; }
+  renderSessions();
+  renderTargets();
+  renderFocus();
+}
+
+function isFocused(kind, v) {
+  const f = state.focus;
+  return !!f && f.kind === kind && (kind === "session" ? f.id === v : f.path === v);
+}
+
+function renderSessions() {
+  const root = $("sessions");
+  root.replaceChildren();
+  $("count").textContent = state.sessions.length;
+  const showGone = $("show-gone").checked;
+  const groups = new Map();
+  for (const k of state.known.values()) {
+    if (k.gone && !showGone && !isFocused("session", k.id)) continue;
+    const dir = k.cwd || "";
+    if (!groups.has(dir)) groups.set(dir, []);
+    groups.get(dir).push(k);
+  }
+  if (!groups.size) root.append(el("li", "empty", "No registered sessions"));
+  const dirs = [...groups.keys()].sort((a, b) => (a === "") - (b === "") || a.localeCompare(b));
+  for (const dir of dirs) {
+    const members = groups.get(dir).sort((a, b) => a.gone - b.gone || a.name.localeCompare(b.name));
+    const g = el("li", "group" + (state.closed.has(dir) ? " closed" : ""));
+    const head = el("div", "group-head" + (isFocused("dir", dir) ? " sel" : ""));
+    const caret = el("button", "caret", state.closed.has(dir) ? "▸" : "▾");
+    caret.type = "button";
+    caret.title = "Collapse or expand";
+    caret.onclick = (e) => {
+      e.stopPropagation();
+      state.closed.has(dir) ? state.closed.delete(dir) : state.closed.add(dir);
+      store("closed", JSON.stringify([...state.closed]));
+      renderSessions();
+    };
+    const path = el("span", "path");
+    if (dir) {
+      const base = basename(dir);
+      path.append(el("b", "", base), document.createTextNode(" " + dir.slice(0, dir.length - base.length).replace(/[\\/]$/, "")));
+      path.title = dir;
+    } else path.textContent = "unknown folder";
+    const live = members.filter((k) => !k.gone).length;
+    head.append(caret, path, el("span", "tag", live + (members.length > live ? "+" + (members.length - live) : "")));
+    if (dir) {
+      head.title = "Show traffic of every session in " + dir;
+      head.onclick = () => select(isFocused("dir", dir) ? null : { kind: "dir", path: dir });
+    }
+    g.append(head);
+    const ul = el("ul");
+    for (const k of members) ul.append(sessionItem(k));
+    g.append(ul);
+    root.append(g);
+  }
+}
+
+function sessionItem(k) {
+  const s = k.live || {};
+  const li = el("li", "pick" + (s.self ? " self" : "") + (k.gone ? " gone" : "") + (isFocused("session", k.id) ? " sel" : ""));
+  li.title = "Show the traffic of " + k.name;
+  li.onclick = () => select(isFocused("session", k.id) ? null : { kind: "session", id: k.id });
+  const row = el("div", "row");
+  row.append(el("span", "name", k.name));
+  if (k.harness) row.append(el("span", "tag", k.harness));
+  if (k.gone) row.append(el("span", "tag", "left"));
+  if (s.delivery === "manual") row.append(el("span", "tag", "manual"));
+  if (s.branch) row.append(el("span", "small mono", s.branch));
+  if (!s.self) {
+    const on = state.followed.has(k.name);
+    const b = el("button", "follow" + (on ? " on" : ""), on ? "★" : "☆");
+    b.type = "button";
+    b.title = on ? "Unfollow" : "Follow: filter and notify on this session";
+    b.onclick = (e) => {
+      e.stopPropagation();
+      on ? state.followed.delete(k.name) : state.followed.add(k.name);
+      saveFollowed(); renderSessions(); refilter();
+    };
+    row.append(b);
+  }
+  li.append(row);
+  const sub = [];
+  if (s.session_id && s.session_id !== s.id) sub.push("session " + s.session_id);
+  if (s.seen) sub.push("seen " + ago(s.seen) + " ago");
+  if (k.sent || k.received) sub.push(`${k.sent} sent · ${k.received} received`);
+  if (sub.length) li.append(el("div", "small", sub.join(" · ")));
+  const keys = Object.keys(k.meta || {}).sort();
+  if (keys.length) {
+    const m = el("div", "meta");
+    for (const key of keys) m.append(el("span", "", key + "=" + k.meta[key]));
+    li.append(m);
+  }
+  if (k.note) li.append(el("div", "note", k.note));
+  return li;
+}
+
+// The focus panel sits above the feed and says whose traffic it shows.
+function renderFocus() {
+  const box = $("focus");
+  const f = state.focus;
+  box.replaceChildren();
+  box.hidden = !f;
+  if (!f) return;
+  const row = el("div", "row");
+  const actions = el("span", "actions");
+  const msg = el("button", "", "Message");
+  msg.type = "button";
+  const all = el("button", "", "Show everyone");
+  all.type = "button";
+  all.onclick = () => select(null);
+  if (f.kind === "session") {
+    const k = state.known.get(f.id) || knownOf(f.id);
+    const s = k.live || {};
+    row.append(el("span", "name", k.name));
+    if (k.harness) row.append(el("span", "tag", k.harness));
+    row.append(el("span", "tag", k.gone ? "left the bus" : "active"));
+    if (s.branch) row.append(el("span", "small mono", s.branch));
+    msg.disabled = k.gone || s.self;
+    msg.onclick = () => target("to:" + k.name);
+    actions.append(msg, all);
+    row.append(actions);
+    box.append(row);
+    if (k.cwd) {
+      const cwd = el("div", "small mono link", k.cwd);
+      cwd.title = "Show everyone in this folder";
+      cwd.onclick = () => select({ kind: "dir", path: k.cwd });
+      box.append(cwd);
+    }
+    const sub = [`${k.sent} sent`, `${k.received} received`];
+    if (k.last) sub.push("last activity " + ago(k.last) + " ago");
+    if (s.session_id && s.session_id !== s.id) sub.push("session " + s.session_id);
+    box.append(el("div", "small", sub.join(" · ")));
+    if (k.note) box.append(el("div", "note", k.note));
+  } else {
+    const members = [...state.known.values()].filter((k) => k.cwd === f.path);
+    row.append(el("span", "name", basename(f.path)));
+    const live = members.filter((k) => !k.gone);
+    row.append(el("span", "tag", live.length + " active"));
+    const branch = (live.find((k) => k.live && k.live.branch) || {}).live;
+    if (branch) row.append(el("span", "small mono", branch.branch));
+    msg.disabled = !live.some((k) => !(k.live && k.live.self));
+    msg.onclick = () => target("scope:dir", f.path);
+    msg.title = "Message every session in this folder";
+    actions.append(msg, all);
+    row.append(actions);
+    box.append(row, el("div", "small mono", f.path));
+    const sent = members.reduce((n, k) => n + k.sent, 0);
+    box.append(el("div", "small", `${sent} message${sent === 1 ? "" : "s"} sent from here`));
+    const chips = el("div", "chips");
+    for (const k of members.sort((a, b) => a.gone - b.gone || a.name.localeCompare(b.name))) {
+      const c = el("span", "link", k.name + (k.gone ? " (left)" : ""));
+      c.onclick = () => select({ kind: "session", id: k.id });
+      chips.append(c);
+    }
+    box.append(chips);
+  }
+}
+
+function renderTargets() {
+  const sel = $("target");
+  const was = sel.value;
+  sel.replaceChildren();
+  const group = (label) => { const g = document.createElement("optgroup"); g.label = label; sel.append(g); return g; };
+  const people = group("Session");
+  for (const s of state.sessions) if (!s.self) {
+    const o = el("option", "", s.name); o.value = "to:" + s.name; people.append(o);
+  }
+  const scopes = group("Scope");
+  for (const [v, l] of [["all", "everyone"], ["repo", "repository of…"], ["dir", "directory…"], ["under", "under directory…"]]) {
+    const o = el("option", "", l); o.value = "scope:" + v; scopes.append(o);
+  }
+  if ([...sel.options].some((o) => o.value === was)) sel.value = was;
+  $("dir").hidden = !/^scope:(repo|dir|under)$/.test(sel.value);
+}
+$("target").onchange = () => { $("dir").hidden = !/^scope:(repo|dir|under)$/.test($("target").value); };
+function target(value, dir) {
+  const sel = $("target");
+  if (![...sel.options].some((o) => o.value === value)) return;
+  sel.value = value;
+  if (dir !== undefined) $("dir").value = dir;
+  sel.onchange();
+  $("text").focus();
+}
+
+// select changes the focus through the URL hash, so Back works and the view can be bookmarked.
+function select(f) {
+  const h = !f ? "" : f.kind === "session" ? "#s=" + encodeURIComponent(f.id) : "#d=" + encodeURIComponent(f.path);
+  if (location.hash === h || (!h && !location.hash)) return applyHash();
+  if (h) location.hash = h;
+  else history.pushState(null, "", location.pathname + location.search);
+  applyHash();
+}
+function applyHash() {
+  const m = /^#([sd])=(.*)$/.exec(location.hash);
+  const prev = state.focus;
+  state.focus = !m ? null : m[1] === "s" ? { kind: "session", id: decodeURIComponent(m[2]) } : { kind: "dir", path: decodeURIComponent(m[2]) };
+  renderSessions();
+  renderFocus();
+  refilter();
+  if (JSON.stringify(prev) !== JSON.stringify(state.focus)) {
+    const f = state.focus;
+    const k = f && f.kind === "session" && state.known.get(f.id);
+    if (k && !k.gone && !(k.live && k.live.self)) target("to:" + k.name);
+    else if (f && f.kind === "dir") { $("target").value = "scope:dir"; $("dir").value = f.path; $("target").onchange(); }
+    $("feed").scrollTop = $("feed").scrollHeight;
+  }
+}
+window.addEventListener("hashchange", applyHash);
+window.addEventListener("popstate", applyHash);
+
+// Messages to the server, including to earlier runs under the same name.
+function toMe(ev) {
+  return (ev.to_ids || []).includes(state.self) || (!!state.selfName && (ev.to || []).includes(state.selfName));
+}
+function involved(ev) {
+  if (!state.followed.size) return false;
+  if (state.followed.has(ev.name)) return true;
+  return (ev.to || []).some((n) => state.followed.has(n));
+}
+// inFocus says whether ev is traffic of the focused session or folder.
+function inFocus(ev) {
+  const f = state.focus;
+  if (!f) return true;
+  if (f.kind === "session") return ev.id === f.id || (ev.to_ids || []).includes(f.id);
+  if (ev.cwd === f.path) return true;
+  return (ev.to_ids || []).some((id) => (state.known.get(id) || {}).cwd === f.path);
+}
+function visible(ev) {
+  if (ev.type === "read" && !$("show-quiet").checked) return false;
+  if (!inFocus(ev)) return false;
+  if ($("only-followed").checked && state.followed.size && !involved(ev)) return false;
+  return true;
+}
+
+function describe(ev) {
+  switch (ev.type) {
+    case "register": return [` joined (${ev.harness}) in ${ev.cwd}`, false];
+    case "update": return [` registered again in ${ev.cwd}`, true];
+    case "unregister": return [" left", false];
+    case "drop": return [` dropped off the bus (${ev.reason})`, false];
+    case "note": return [ev.note ? `: ${ev.note}` : " cleared the note", false];
+    case "id": return [` set session id ${ev.session_id}`, true];
+    case "meta": return [` metadata: ${Object.entries(ev.meta || {}).map(([k, v]) => k + "=" + v).join(" ") || "(none)"}`, true];
+    case "move": return [` moved to ${ev.cwd}`, true];
+    case "read": return [` read ${ev.count} message${ev.count === 1 ? "" : "s"}`, true];
+    default: return [" " + ev.type, true];
+  }
+}
+
+// who renders a session name that focuses that session when clicked.
+function who(id, name, cls) {
+  const e = el("span", (cls || "") + " link", name || id);
+  e.title = "Show the traffic of " + (name || id);
+  e.onclick = () => select({ kind: "session", id });
+  return e;
+}
+
+const events = [];
+function renderEvent(ev, i) {
+  const row = el("div", "ev");
+  row.dataset.i = i;
+  const t = new Date(ev.time * 1000);
+  row.append(el("time", "", t.toLocaleTimeString([], { hour12: false })));
+  const body = el("div", "body");
+  if (ev.type === "send") {
+    row.classList.add("send");
+    if (toMe(ev)) row.classList.add("tome");
+    const head = el("div");
+    head.append(el("span", "dir"), who(ev.id, ev.name, "name"), document.createTextNode(" → "));
+    const to = ev.to || [];
+    if (!to.length) head.append(document.createTextNode("nobody"));
+    to.forEach((n, j) => {
+      if (j) head.append(document.createTextNode(", "));
+      head.append(who((ev.to_ids || [])[j] || n, n));
+    });
+    if (ev.scope) head.append(el("span", "small", "  (" + ev.scope + ")"));
+    body.append(head, el("div", "text", ev.text));
+  } else {
+    const [text, quiet] = describe(ev);
+    if (quiet) row.classList.add("quiet");
+    body.append(who(ev.id, ev.name || ev.id), document.createTextNode(text));
+  }
+  row.append(body);
+  mark(row, ev);
+  return row;
+}
+// mark shows or hides row and, with a session in focus, marks messages as going out or coming in.
+function mark(row, ev) {
+  row.hidden = !visible(ev);
+  if (ev.type !== "send") return;
+  const f = state.focus;
+  const out = !!f && f.kind === "session" && ev.id === f.id;
+  const inn = !!f && f.kind === "session" && !out;
+  row.classList.toggle("out", out);
+  row.classList.toggle("in", inn);
+  row.querySelector(".dir").textContent = out ? "out" : inn ? "in" : "";
+}
+function addEvent(ev) {
+  const feed = $("feed");
+  const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40;
+  events.push(ev);
+  learn(ev);
+  feed.append(renderEvent(ev, events.length - 1));
+  if (atBottom) feed.scrollTop = feed.scrollHeight;
+}
+function refilter() {
+  for (const row of $("feed").children) mark(row, events[row.dataset.i]);
+}
+$("only-followed").onchange = refilter;
+$("show-quiet").onchange = refilter;
+$("show-gone").onchange = () => { store("showGone", $("show-gone").checked ? "1" : "0"); renderSessions(); };
+$("clear").onclick = () => $("feed").replaceChildren();
+
+function notify(ev) {
+  if (!state.live || ev.type !== "send" || !("Notification" in window) || Notification.permission !== "granted") return;
+  if (!toMe(ev) && !involved(ev)) return;
+  new Notification(`${ev.name} → ${(ev.to || []).join(", ")}`, { body: ev.text });
+}
+$("notify").onclick = () => {
+  if ("Notification" in window) Notification.requestPermission().then((p) => { $("notify").textContent = p === "granted" ? "Notifications on" : "Notifications"; });
+};
+if ("Notification" in window && Notification.permission === "granted") $("notify").textContent = "Notifications on";
+
+const refreshOn = new Set(["register", "update", "unregister", "drop", "note", "id", "meta", "move", "send"]);
+let refreshTimer;
+function connect() {
+  // The whole server backlog, so a session's history reaches back as far as possible.
+  const es = new EventSource("/api/events?backlog=1000");
+  es.addEventListener("live", () => {
+    state.live = true;
+    $("dot").classList.add("on");
+    $("status").textContent = "live";
+    loadSessions();
+  });
+  es.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    addEvent(ev);
+    notify(ev);
+    if (state.live && refreshOn.has(ev.type)) {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(loadSessions, 150);
+    }
+  };
+  es.onerror = () => {
+    state.live = false;
+    $("dot").classList.remove("on");
+    $("status").textContent = "reconnecting";
+    if (es.readyState === EventSource.CLOSED) setTimeout(connect, 2000);
+    else { $("feed").replaceChildren(); events.length = 0; resetKnown(); }
+  };
+}
+
+$("send").onsubmit = async (e) => {
+  e.preventDefault();
+  const text = $("text").value.trim();
+  if (!text) return;
+  const [kind, value] = $("target").value.split(/:(.*)/s);
+  const body = kind === "to" ? { to: value, text } : { scope: value, dir: $("dir").value, text };
+  $("err").textContent = "";
+  const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { $("err").textContent = data.error || r.statusText; return; }
+  if (!data.sent_to.length) { $("err").textContent = "Nobody matched that scope."; return; }
+  $("text").value = "";
+};
+$("text").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("send").requestSubmit(); }
+});
+
+setInterval(() => { if (state.live) loadSessions(); }, 15000);
+// Know which session is the server before the backlog arrives, so messages to it stand out.
+loadSessions().finally(() => { applyHash(); connect(); });
+</script>
+</body>
+</html>
