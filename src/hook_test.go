@@ -72,15 +72,38 @@ func TestHookRetiredControllerCanStop(t *testing.T) {
 }
 
 func TestHookSessionEnd(t *testing.T) {
-	for _, reason := range []string{"clear", "resume", "prompt_input_exit"} {
+	for _, reason := range []string{"clear", "resume", "other", "prompt_input_exit", "logout", ""} {
 		t.Run(reason, func(t *testing.T) {
 			e := setupHookTest(t, deliverHooks)
 			runHookTest(t, map[string]string{"hook_event_name": "SessionEnd", "session_id": e.ID, "reason": reason})
-			wantPresent := reason == "prompt_input_exit"
-			if fileExists(sessionPath(e.ID)) != wantPresent {
+			if fileExists(sessionPath(e.ID)) {
 				t.Errorf("session presence differs for %s", reason)
 			}
+			if !fileExists(leftPath(e.ID)) {
+				t.Error("ended session missing left marker")
+			}
+			runHookTest(t, map[string]string{"hook_event_name": "PostToolUse", "session_id": e.ID})
+			if fileExists(sessionPath(e.ID)) {
+				t.Fatal("late hook rejoined ended session")
+			}
+			runHookTest(t, map[string]string{"hook_event_name": "SessionStart", "session_id": e.ID})
+			if !fileExists(sessionPath(e.ID)) || fileExists(leftPath(e.ID)) {
+				t.Fatal("SessionStart did not resume ended session")
+			}
 		})
+	}
+}
+
+func TestHookControllerSessionEnd(t *testing.T) {
+	e := setupHookTest(t, deliverHooks)
+	e.Meta = map[string]string{"role": "controller"}
+	writeJSON(sessionPath(e.ID), e)
+	runHookTest(t, map[string]string{"hook_event_name": "SessionEnd", "session_id": e.ID, "reason": "other"})
+	if fileExists(sessionPath(e.ID)) {
+		t.Fatal("controller survived SessionEnd")
+	}
+	if output := runHookTest(t, map[string]string{"hook_event_name": "Stop", "session_id": e.ID}); output != "" || fileExists(sessionPath(e.ID)) {
+		t.Fatalf("late Stop rejoined or blocked ended controller: %s", output)
 	}
 }
 
@@ -95,6 +118,7 @@ func setupHookTest(t *testing.T, delivery string) *entry {
 	t.Cleanup(func() { root, sessDir, inboxDir = oldRoot, oldSess, oldInbox })
 	t.Setenv("AGENT_BUS_ID", "parent")
 	setup()
+	t.Setenv("AGENT_BUS_AUTO", "1")
 	e := &entry{ID: "parent", Name: "parent", Delivery: delivery, PID: os.Getpid(), Start: procStart(os.Getpid()), Seen: now(), Cwd: "/parent-directory"}
 	writeJSON(sessionPath(e.ID), e)
 	os.MkdirAll(filepath.Join(inboxDir, e.ID), 0o700)
@@ -114,7 +138,7 @@ func runHookTest(t *testing.T, payload map[string]string) string {
 	}
 	cmd := exec.Command(exe, "-test.run=^TestHookProcess$")
 	cmd.Args[0] = "claude"
-	cmd.Env = append(os.Environ(), "BUS_HOOK_TEST_PROCESS=harness", "AGENT_BUS_DIR="+root)
+	cmd.Env = append(os.Environ(), "GORACE=atexit_sleep_ms=0", "BUS_HOOK_TEST_PROCESS=harness", "AGENT_BUS_DIR="+root)
 	cmd.Stdin = strings.NewReader(string(data))
 	result, err := cmd.CombinedOutput()
 	if err != nil {
@@ -136,10 +160,16 @@ func TestHookProcess(t *testing.T) {
 		cmd.Env = append(os.Environ(), "BUS_HOOK_TEST_PROCESS=hook")
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
+			if exit, ok := err.(*exec.ExitError); ok {
+				os.Exit(exit.ExitCode())
+			}
 			os.Exit(1)
 		}
 		os.Exit(0)
 	case "hook":
+		if os.Getenv("BUS_HOOK_TEST_COMMAND") == "wait" {
+			cmdWait([]string{"--timeout", "60"})
+		}
 		cmdHook(nil)
 		os.Exit(0)
 	}

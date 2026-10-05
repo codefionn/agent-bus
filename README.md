@@ -41,16 +41,14 @@ taken from its directory (`agent-bus`, then `agent-bus-7d54` for the next
 one) and tells the agent it's on the bus. After that the `UserPromptSubmit`
 and `PostToolUse` hooks, or the pi and opencode plugins, hand each message to
 the agent as it arrives. The agent never has to run a bus command to receive
-anything. The session leaves the bus when its harness process exits. A
-`SessionEnd` hook alone doesn't take it off, so a session whose turn ended but
-whose harness still runs stays registered. Hooks deliver queued messages on
-the next prompt or tool call; they do not wake an idle Claude Code or Codex
-turn. The exception is Claude
-Code's `/clear` and `/resume`, where a new session takes over the process and
-the old one leaves. A session that missed its
-`SessionStart` hook, say because the hooks went in after it started, joins on
-its next prompt or tool call. One that left with `agent-bus unregister` stays
-off until it registers again.
+anything. `SessionEnd` removes the session immediately and wakes background
+waits before the harness exits. Late tool callbacks leave it off the bus;
+`SessionStart` registers it again when it resumes. Finishing a turn leaves the
+session registered. Hooks deliver queued messages on the next prompt or tool
+call; they do not wake an idle Claude Code or Codex turn. A session that missed
+its `SessionStart` hook, say because the hooks went in after it started, joins
+on its next prompt or tool call. One that left with `agent-bus unregister`
+stays off until it registers again.
 
 **Manual.** Nothing joins on its own. The agent runs `agent-bus register` and
 then fetches messages one of two ways:
@@ -73,6 +71,7 @@ A controller assigned to receive future commands sets
 calls, and restart it after each message or timeout. The `Stop` hook continues
 a marked controller when it tries to end its turn. When the user ends the
 controller role, clear it with `agent-bus meta role=` before ending the turn.
+Closing the session leaves the bus immediately, including for controllers.
 A wait that finishes after a final response does not reliably start a new
 turn. For other hook sessions, `Stop` continues the turn only when messages
 are queued. Subagent hooks leave the parent session's inbox alone.

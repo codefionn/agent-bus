@@ -514,10 +514,9 @@ func finishWait(asJSON bool, status string, msgs []*message, text string) {
 //
 //   - SessionStart registers the session when auto-register is on (hooks mode)
 //     and tells the agent its bus name.
-//   - SessionEnd takes the session off the bus only when another session
-//     replaces it in the same harness (Claude Code's /clear and /resume).
-//     Otherwise the session stays until its harness process exits, so a
-//     harness that fires SessionEnd while it keeps running still gets messages.
+//   - SessionEnd takes the session off the bus and wakes background waiters
+//     before the harness exits. Late tool hooks cannot rejoin it; a subsequent
+//     SessionStart clears that marker and registers a resumed session.
 //   - Any other event follows the session into its current directory and hands
 //     unread messages to the model, if the session uses hooks delivery. It
 //     registers a session the SessionStart hook missed, for example because the
@@ -533,7 +532,6 @@ func cmdHook(args []string) {
 		Event          string `json:"hook_event_name"`
 		SessionID      string `json:"session_id"`
 		Cwd            string `json:"cwd"`
-		Reason         string `json:"reason"`
 		AgentID        string `json:"agent_id"`
 		TranscriptPath string `json:"transcript_path"`
 	}
@@ -572,12 +570,16 @@ func cmdHook(args []string) {
 		hookSessionStart(id, candidates, payload.SessionID, payload.Cwd)
 		return
 	case "SessionEnd":
-		if id != "" && (payload.Reason == "clear" || payload.Reason == "resume") {
+		if id == "" && len(candidates) > 0 {
+			id = candidates[0]
+		}
+		if id != "" {
 			locked(func() {
 				if e, ok := load[entry](sessionPath(id)); ok {
 					logEvent(newEvent("unregister", e))
 				}
 				drop(id)
+				markLeft(id)
 			})
 		}
 		return
