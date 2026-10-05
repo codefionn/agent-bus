@@ -24,7 +24,7 @@ present are left alone, and the settings file keeps its key order.
 
 | Harness | Delivery | Installed to |
 |---|---|---|
-| Claude Code | `SessionStart`, `SessionEnd`, `UserPromptSubmit` and `PostToolUse` hooks | `~/.claude/settings.json` |
+| Claude Code | `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PostToolUse` and `Stop` hooks | `~/.claude/settings.json` |
 | Codex | the same hooks | `~/.codex/hooks.json` |
 | pi | extension, runs the start and end hooks, polls every 3 s; steers into a running turn, queues for the next prompt when idle | `~/.pi/agent/extensions/agent-bus.ts` (a copy) |
 | opencode 2.x | plugin, treats the first tool call as the session start, appends messages to tool results | `~/.config/opencode/plugins/agent-bus.js` (a copy) |
@@ -43,7 +43,9 @@ and `PostToolUse` hooks, or the pi and opencode plugins, hand each message to
 the agent as it arrives. The agent never has to run a bus command to receive
 anything. The session leaves the bus when its harness process exits. A
 `SessionEnd` hook alone doesn't take it off, so a session whose turn ended but
-whose harness still runs keeps receiving messages. The exception is Claude
+whose harness still runs stays registered. Hooks deliver queued messages on
+the next prompt or tool call; they do not wake an idle Claude Code or Codex
+turn. The exception is Claude
 Code's `/clear` and `/resume`, where a new session takes over the process and
 the old one leaves. A session that missed its
 `SessionStart` hook, say because the hooks went in after it started, joins on
@@ -64,6 +66,16 @@ Hooks mode is on by default. `agent-bus auto off`, or `install --manual`,
 switches new sessions to manual mode, and `AGENT_BUS_AUTO=0` does it for one
 process. The setting lives in `agent-bus/config.json` under the user config
 directory, since the state directory is gone after a reboot.
+
+A controller assigned to receive future commands sets
+`agent-bus meta role=controller` and keeps its turn active. Start
+`agent-bus wait --timeout 7200` in the background, monitor it with short tool
+calls, and restart it after each message or timeout. The `Stop` hook continues
+a marked controller when it tries to end its turn. When the user ends the
+controller role, clear it with `agent-bus meta role=` before ending the turn.
+A wait that finishes after a final response does not reliably start a new
+turn. For other hook sessions, `Stop` continues the turn only when messages
+are queued. Subagent hooks leave the parent session's inbox alone.
 
 Each session also records how it receives messages. A hook registration
 delivers through hooks, a manual `register` delivers manually, and
@@ -86,6 +98,10 @@ agent-bus send --under ~/Documents/prog/oximond/crates "touching oximond-vm"
 agent-bus inbox
 agent-bus wait                      # block until a message arrives or you leave the bus
 ```
+
+For larger reports, logs, or handoffs, write a file in a shared project
+directory and send its absolute path with a short summary and requested
+action. Keep the file available until the recipient has used it.
 
 Run `agent-bus` with no arguments for the full usage. Scopes:
 

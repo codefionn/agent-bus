@@ -523,17 +523,30 @@ func finishWait(asJSON bool, status string, msgs []*message, text string) {
 //     registers a session the SessionStart hook missed, for example because the
 //     hook was added after the session started, unless the session left the
 //     bus with agent-bus unregister.
+//   - Subagent hooks leave the parent session and its inbox alone.
+//   - Stop blocks when hook-delivered messages need attention or the session
+//     has role=controller metadata. Manual delivery never consumes the inbox.
 //
 // It stays silent when there is nothing to say.
 func cmdHook(args []string) {
 	var payload struct {
-		Event     string `json:"hook_event_name"`
-		SessionID string `json:"session_id"`
-		Cwd       string `json:"cwd"`
-		Reason    string `json:"reason"`
+		Event          string `json:"hook_event_name"`
+		SessionID      string `json:"session_id"`
+		Cwd            string `json:"cwd"`
+		Reason         string `json:"reason"`
+		AgentID        string `json:"agent_id"`
+		TranscriptPath string `json:"transcript_path"`
 	}
 	data, _ := io.ReadAll(os.Stdin)
 	json.Unmarshal(data, &payload)
+	// Claude subagents share the parent's session id, but hook context goes to
+	// the subagent. Leave the parent's registration and inbox for its own hooks.
+	// Older payloads can identify the subagent only by its transcript path.
+	transcript := strings.ReplaceAll(payload.TranscriptPath, `\`, "/")
+	if payload.AgentID != "" || (strings.HasSuffix(transcript, ".jsonl") &&
+		strings.HasPrefix(filepath.Base(transcript), "agent-") && strings.Contains(transcript, "/subagents/")) {
+		return
+	}
 	if payload.Event == "" {
 		payload.Event = "PostToolUse"
 	}
@@ -582,7 +595,8 @@ func cmdHook(args []string) {
 	}
 	moved := payload.Cwd != "" && payload.Cwd != e.Cwd
 	deliver := e.Delivery != deliverManual && len(inboxFiles(id)) > 0
-	if !moved && !deliver {
+	controllerStop := payload.Event == "Stop" && e.Meta["role"] == "controller"
+	if !moved && !deliver && !controllerStop {
 		return
 	}
 	var msgs []*message
@@ -601,8 +615,27 @@ func cmdHook(args []string) {
 			msgs = take(e, false)
 		}
 	})
+	text := ""
 	if len(msgs) > 0 {
-		hookOutput(payload.Event, "Messages from other agent sessions (reply with agent-bus send NAME ...):\n"+render(msgs))
+		text = "Messages from other agent sessions (reply with agent-bus send NAME ...):\n" + render(msgs)
+	}
+	if controllerStop {
+		if text != "" {
+			text += "\n\n"
+		}
+		text += "Your controller role is still active. Keep a background `agent-bus wait --timeout 7200` loop running, " +
+			"poll it with short tool calls, and restart after each message or timeout. Report progress in commentary. " +
+			"Finish only when the user retires this role, then run `agent-bus meta role=`."
+	}
+	if text != "" {
+		if payload.Event == "Stop" {
+			if len(msgs) > 0 {
+				text += "\n\nHandle these peer messages before trying to finish the turn."
+			}
+			printJSON(map[string]string{"decision": "block", "reason": text})
+		} else {
+			hookOutput(payload.Event, text)
+		}
 	}
 }
 
@@ -665,6 +698,10 @@ func hookJoin(event, id string, candidates []string, sessionID, cwd string) {
 			"Give peers at least two hours unless the user sets a shorter deadline. Monitor the wait with short tool calls "+
 			"and restart it on timeout while the reply is still needed and the peer is active.", verb, e.Name)
 	}
+	text += " If assigned ongoing coordination, run `agent-bus meta role=controller`, keep a background 7200-second wait loop running, poll it with short tool calls, " +
+		"and restart after each message or timeout even when no specific reply is pending. Report progress in commentary; " +
+		"finish only when the user retires that controller role, then run `agent-bus meta role=`. Hook delivery cannot wake a turn that has ended."
+	text += " For larger handoffs, write content to a shared file and send its absolute path with a short summary and the action needed."
 	if len(msgs) > 0 {
 		text += "\n\nMessages from other agent sessions (reply with agent-bus send NAME ...):\n" + render(msgs)
 	}

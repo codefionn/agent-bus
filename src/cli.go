@@ -27,7 +27,8 @@ agent-bus install [--auto | --manual]     copy agent-bus to ~/.local/bin and wir
 Two ways to use the bus:
 
     hooks    The SessionStart hook registers every new session and the
-             harness hook or plugin hands messages to the agent as they come.
+             harness hook or plugin delivers on its next prompt or tool call.
+             Stop hooks continue marked controllers and handle queued messages.
              The session leaves when its harness exits. On while auto is on.
     manual   The agent runs agent-bus register itself. It receives messages
              by running agent-bus wait in the background, which returns with
