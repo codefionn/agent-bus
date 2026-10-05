@@ -2,6 +2,7 @@ package bus
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -81,5 +82,56 @@ func TestMergeHooksCodexHasNoPreToolUse(t *testing.T) {
 	}
 	if parsed.(*object).get("hooks").(*object).get("PreToolUse") != nil {
 		t.Fatalf("added a Codex PreToolUse hook: %s", data)
+	}
+}
+
+func TestMergeHooksUpgradesStopWatcher(t *testing.T) {
+	for _, claude := range []bool{true, false} {
+		name := "Codex"
+		if claude {
+			name = "Claude"
+		}
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			original := []byte(`{"model":"custom","hooks":{"Stop":[{"hooks":[{"type":"command","command":"custom-stop-hook"},{"type":"command","command":"/old/agent-bus hook","timeout":5}]}]}}`)
+			if err := os.WriteFile(path, original, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			mergeHooks(path, "/new/agent-bus", claude)
+			first, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := parseOrdered(first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			settings := parsed.(*object)
+			stop := settings.get("hooks").(*object).get("Stop").([]any)
+			before, _ := parseOrdered(original)
+			oldStop := before.(*object).get("hooks").(*object).get("Stop").([]any)
+			if settings.get("model") != "custom" || !reflect.DeepEqual(stop[0], oldStop[0]) {
+				t.Fatalf("existing settings or Stop hooks changed: %s", first)
+			}
+			if claude {
+				if len(stop) != 2 || !hasBusHookWithArgs(stop[1:], "--rewake") {
+					t.Fatalf("missing Claude Stop watcher: %s", first)
+				}
+				watcher := stop[1].(*object).get("hooks").([]any)[0].(*object)
+				if watcher.get("asyncRewake") != true || watcher.get("timeout").(json.Number).String() != "604800" {
+					t.Fatalf("incorrect watcher settings: %s", first)
+				}
+			} else if len(stop) != 1 || hasBusHookWithArgs(stop, "--rewake") {
+				t.Fatalf("added Codex Stop watcher: %s", first)
+			}
+			mergeHooks(path, "/new/agent-bus", claude)
+			second, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(first, second) {
+				t.Fatal("second merge changed settings")
+			}
+		})
 	}
 }

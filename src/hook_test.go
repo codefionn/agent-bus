@@ -110,16 +110,19 @@ func TestHookControllerSessionEnd(t *testing.T) {
 func setupHookTest(t *testing.T, delivery string) *entry {
 	t.Helper()
 	oldRoot, oldSess, oldInbox := root, sessDir, inboxDir
+	oldLog, oldLogOld, oldWatch, oldPending := eventLog, eventLogOld, watchDir, eventsPending
 	root = t.TempDir()
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	sessDir, inboxDir = filepath.Join(root, "sessions"), filepath.Join(root, "inbox")
+	eventLog, eventLogOld, watchDir, eventsPending = filepath.Join(root, "events.jsonl"), filepath.Join(root, "events.1.jsonl"), filepath.Join(root, "watchers"), false
 	t.Cleanup(func() { root, sessDir, inboxDir = oldRoot, oldSess, oldInbox })
+	t.Cleanup(func() { eventLog, eventLogOld, watchDir, eventsPending = oldLog, oldLogOld, oldWatch, oldPending })
 	t.Setenv("AGENT_BUS_ID", "parent")
 	setup()
 	t.Setenv("AGENT_BUS_AUTO", "1")
-	e := &entry{ID: "parent", Name: "parent", Delivery: delivery, PID: os.Getpid(), Start: procStart(os.Getpid()), Seen: now(), Cwd: "/parent-directory"}
+	e := &entry{ID: "parent", Name: "parent", Harness: "claude", Delivery: delivery, PID: os.Getpid(), Start: procStart(os.Getpid()), Seen: now(), Registered: now(), Cwd: "/parent-directory"}
 	writeJSON(sessionPath(e.ID), e)
 	os.MkdirAll(filepath.Join(inboxDir, e.ID), 0o700)
 	writeJSON(filepath.Join(inboxDir, e.ID, "1-peer.json"), &message{Time: now(), From: "peer", FromName: "peer", Text: "parent-only message"})
@@ -184,6 +187,10 @@ func TestHookProcess(t *testing.T) {
 		}
 		if os.Getenv("BUS_HOOK_TEST_COMMAND") == "wait" {
 			cmdWait([]string{"--timeout", "60"})
+		}
+		if os.Getenv("BUS_HOOK_TEST_COMMAND") == "rewake" {
+			cmdHook([]string{"--rewake"})
+			os.Exit(0)
 		}
 		cmdHook(nil)
 		os.Exit(0)

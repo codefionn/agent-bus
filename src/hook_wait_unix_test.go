@@ -10,6 +10,25 @@ import (
 	"time"
 )
 
+func TestHookRewakePreservesWaitEndpoint(t *testing.T) {
+	e := setupHookTest(t, deliverHooks)
+	os.RemoveAll(filepath.Join(inboxDir, e.ID))
+	wake, stop, err := listenWake(e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	cmd, output, _ := startRewake(t, e)
+	poke(e.ID)
+	select {
+	case <-wake:
+	case <-time.After(time.Second):
+		t.Fatal("rewake replaced existing wait endpoint")
+	}
+	locked(func() { drop(e.ID) })
+	finishRewake(t, cmd, output, 0)
+}
+
 func TestHookSessionEndWakesWaiter(t *testing.T) {
 	for _, reason := range []string{"other", "prompt_input_exit"} {
 		t.Run(reason, func(t *testing.T) {

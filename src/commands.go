@@ -527,6 +527,8 @@ func finishWait(asJSON bool, status string, msgs []*message, text string) {
 //     PreToolUse gives each subagent's Bash commands a separate bus identity.
 //   - Stop blocks when hook-delivered messages need attention or the session
 //     has role=controller metadata. Manual delivery never consumes the inbox.
+//   - With --rewake, an asynchronous Stop hook waits without consuming messages
+//     and exits 2 with a stderr notice so Claude wakes an idle conversation.
 //
 // It stays silent when there is nothing to say.
 func cmdHook(args []string) {
@@ -541,6 +543,9 @@ func cmdHook(args []string) {
 	}
 	data, _ := io.ReadAll(os.Stdin)
 	json.Unmarshal(data, &payload)
+	if slices.Contains(args, "--rewake") && payload.Event != "Stop" {
+		return
+	}
 	// Claude subagents share the parent's session id, but hook context goes to
 	// the subagent. Leave the parent's registration and inbox for its own hooks.
 	// Older payloads can identify the subagent only by its transcript path.
@@ -592,6 +597,13 @@ func cmdHook(args []string) {
 			id = c
 			break
 		}
+	}
+	if slices.Contains(args, "--rewake") {
+		code := hookRewake(id)
+		if code != 0 {
+			os.Exit(code)
+		}
+		return
 	}
 
 	switch payload.Event {

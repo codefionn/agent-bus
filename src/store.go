@@ -149,6 +149,7 @@ func alive(e *entry) bool {
 // drop removes a session and its unread messages, and wakes its `agent-bus wait`.
 func drop(id string) {
 	defer poke(id)
+	stopRewake(id)
 	os.Remove(sessionPath(id))
 	os.RemoveAll(filepath.Join(inboxDir, id))
 	unwatch(id)

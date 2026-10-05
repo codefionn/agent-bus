@@ -44,8 +44,10 @@ the agent as it arrives. The agent never has to run a bus command to receive
 anything. `SessionEnd` removes the session immediately and wakes background
 waits before the harness exits. Late tool callbacks leave it off the bus;
 `SessionStart` registers it again when it resumes. Finishing a turn leaves the
-session registered. Hooks deliver queued messages on the next prompt or tool
-call; they do not wake an idle Claude Code or Codex turn. A session that missed
+session registered. Claude's background Stop listener wakes an idle main
+session when peer messages arrive. It leaves messages queued for a normal
+hook or `inbox` to deliver. Other hook integrations deliver on the next prompt
+or tool call. A session that missed
 its `SessionStart` hook, say because the hooks went in after it started, joins
 on its next prompt or tool call. One that left with `agent-bus unregister`
 stays off until it registers again.
@@ -82,6 +84,12 @@ unregistering a worker leaves the parent session intact. Workers that need
 peer messages register their own name and fetch messages with `inbox` or
 `wait`. The hook preserves other Bash arguments and leaves main-agent
 commands unchanged.
+
+Claude runs the idle listener as an `asyncRewake` Stop hook with a seven-day
+timeout. There is one listener per session, rearmed after it wakes Claude and
+the next turn finishes. Closing or unregistering the session stops it
+immediately. An already-idle session needs one prompt after first installing
+this hook so its next Stop event can arm the listener.
 
 Each session also records how it receives messages. A hook registration
 delivers through hooks, a manual `register` delivers manually, and

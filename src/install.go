@@ -153,9 +153,8 @@ func addInstructions(path string) {
 
 var busHook = regexp.MustCompile(`agent-bus(\.exe)?"?\s+hook\b`)
 
-// mergeHooks adds our hooks to a Claude-style settings file unless an
-// agent-bus hook is already there. Keys keep their order.
-func mergeHooks(path, bin string, withSubagentIsolation bool) {
+// mergeHooks adds missing agent-bus hooks. Keys keep their order.
+func mergeHooks(path, bin string, withClaudeHooks bool) {
 	command := bin
 	if runtime.GOOS == "windows" || strings.ContainsAny(bin, " \t") {
 		command = `"` + filepath.ToSlash(bin) + `"`
@@ -186,15 +185,24 @@ func mergeHooks(path, bin string, withSubagentIsolation bool) {
 	addHooks := add.(*object).get("hooks").(*object)
 	for _, event := range addHooks.keys {
 		// Claude and Codex use different input-rewrite contracts.
-		if event == "PreToolUse" && !withSubagentIsolation {
+		if event == "PreToolUse" && !withClaudeHooks {
 			continue
 		}
 		existing, _ := hooks.get(event).([]any)
-		if hasBusHook(existing) {
-			continue
+		for _, group := range addHooks.get(event).([]any) {
+			list := group.(*object).get("hooks").([]any)
+			command := list[0].(*object).get("command").(string)
+			args := strings.TrimSpace(command[busHook.FindStringIndex(command)[1]:])
+			if args == "--rewake" && !withClaudeHooks {
+				continue
+			}
+			if hasBusHookWithArgs(existing, args) {
+				continue
+			}
+			existing = append(existing, group)
+			hooks.set(event, existing)
+			changed = true
 		}
-		hooks.set(event, append(existing, addHooks.get(event).([]any)...))
-		changed = true
 	}
 	if !changed {
 		return
@@ -207,6 +215,10 @@ func mergeHooks(path, bin string, withSubagentIsolation bool) {
 }
 
 func hasBusHook(groups []any) bool {
+	return hasBusHookWithArgs(groups, "")
+}
+
+func hasBusHookWithArgs(groups []any, args string) bool {
 	for _, g := range groups {
 		obj, _ := g.(*object)
 		if obj == nil {
@@ -215,8 +227,10 @@ func hasBusHook(groups []any) bool {
 		list, _ := obj.get("hooks").([]any)
 		for _, h := range list {
 			if ho, _ := h.(*object); ho != nil {
-				if cmd, _ := ho.get("command").(string); busHook.MatchString(cmd) {
-					return true
+				if cmd, _ := ho.get("command").(string); cmd != "" {
+					if match := busHook.FindStringIndex(cmd); match != nil && strings.TrimSpace(cmd[match[1]:]) == args {
+						return true
+					}
 				}
 			}
 		}
