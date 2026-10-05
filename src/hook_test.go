@@ -127,6 +127,10 @@ func setupHookTest(t *testing.T, delivery string) *entry {
 }
 
 func runHookTest(t *testing.T, payload map[string]string) string {
+	return runHookPayloadTest(t, payload)
+}
+
+func runHookPayloadTest(t *testing.T, payload any) string {
 	t.Helper()
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -157,6 +161,9 @@ func TestHookProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 		cmd := exec.Command(exe, "-test.run=^TestHookProcess$")
+		if os.Getenv("BUS_HOOK_TEST_COMMAND") == "shell" {
+			cmd = exec.Command("bash", "-c", os.Getenv("BUS_HOOK_TEST_SHELL"))
+		}
 		cmd.Env = append(os.Environ(), "BUS_HOOK_TEST_PROCESS=hook")
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
@@ -167,11 +174,127 @@ func TestHookProcess(t *testing.T) {
 		}
 		os.Exit(0)
 	case "hook":
+		switch os.Getenv("BUS_HOOK_TEST_COMMAND") {
+		case "register":
+			cmdRegister([]string{"worker"})
+			os.Exit(0)
+		case "unregister":
+			cmdUnregister(nil)
+			os.Exit(0)
+		}
 		if os.Getenv("BUS_HOOK_TEST_COMMAND") == "wait" {
 			cmdWait([]string{"--timeout", "60"})
 		}
 		cmdHook(nil)
 		os.Exit(0)
+	}
+}
+
+func TestHookSubagentBashIsolation(t *testing.T) {
+	e := setupHookTest(t, deliverHooks)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	quotedExe := "'" + strings.ReplaceAll(exe, "'", "'\"'\"'") + "'"
+	command := "BUS_HOOK_TEST_COMMAND=register " + quotedExe + " -test.run=^TestHookProcess$ >/dev/null; BUS_HOOK_TEST_COMMAND=unregister " + quotedExe + " -test.run=^TestHookProcess$ >/dev/null"
+	output := runHookPayloadTest(t, map[string]any{"hook_event_name": "PreToolUse", "session_id": e.ID, "agent_id": "worker123", "agent_type": "Explore", "tool_name": "Bash", "tool_input": map[string]any{"command": command, "timeout": 1234, "description": "worker cleanup", "run_in_background": true}})
+	var result struct {
+		HookSpecificOutput struct {
+			UpdatedInput       map[string]any `json:"updatedInput"`
+			PermissionDecision string         `json:"permissionDecision"`
+			AdditionalContext  string         `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if output != "" {
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rewritten, ok := result.HookSpecificOutput.UpdatedInput["command"].(string); ok {
+		command = rewritten
+	}
+	cmd := exec.Command(exe, "-test.run=^TestHookProcess$")
+	cmd.Args[0] = "claude"
+	cmd.Env = append(os.Environ(), "GORACE=atexit_sleep_ms=0", "BUS_HOOK_TEST_PROCESS=harness", "BUS_HOOK_TEST_COMMAND=shell", "BUS_HOOK_TEST_SHELL="+command, "AGENT_BUS_DIR="+root)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("worker shell: %v %s", err, output)
+	}
+	parent, exists := load[entry](sessionPath(e.ID))
+	if !exists || parent.Name != e.Name || len(inboxFiles(e.ID)) != 1 || fileExists(leftPath(e.ID)) {
+		t.Fatal("worker register/unregister altered parent session or inbox")
+	}
+	if result.HookSpecificOutput.PermissionDecision != "" {
+		t.Error("rewrite bypassed normal permission checks")
+	}
+	if !strings.Contains(result.HookSpecificOutput.AdditionalContext, "agent-bus register NAME") {
+		t.Error("unregistered worker missing own-registration guidance")
+	}
+	input := result.HookSpecificOutput.UpdatedInput
+	if input["timeout"] != float64(1234) || input["description"] != "worker cleanup" || input["run_in_background"] != true {
+		t.Errorf("tool input fields lost: %v", input)
+	}
+	left, _ := os.ReadDir(filepath.Join(root, "left"))
+	if len(left) != 1 || left[0].Name() == e.ID {
+		t.Errorf("worker did not unregister its own identity: %v", left)
+	}
+}
+
+func TestHookSubagentBashIdentity(t *testing.T) {
+	e := setupHookTest(t, deliverHooks)
+	os.RemoveAll(filepath.Join(inboxDir, e.ID))
+	lastContext := ""
+	rewrite := func(agentID, transcript, tool string) string {
+		t.Helper()
+		output := runHookPayloadTest(t, map[string]any{"hook_event_name": "PreToolUse", "session_id": e.ID, "agent_id": agentID, "transcript_path": transcript, "tool_name": tool, "tool_input": map[string]any{"command": "printf hello"}})
+		if output == "" {
+			return ""
+		}
+		var result struct {
+			HookSpecificOutput struct {
+				Event              string         `json:"hookEventName"`
+				UpdatedInput       map[string]any `json:"updatedInput"`
+				PermissionDecision string         `json:"permissionDecision"`
+				AdditionalContext  string         `json:"additionalContext"`
+			} `json:"hookSpecificOutput"`
+		}
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.HookSpecificOutput.Event != "PreToolUse" || result.HookSpecificOutput.PermissionDecision != "" {
+			t.Fatalf("unexpected hook output: %s", output)
+		}
+		lastContext = result.HookSpecificOutput.AdditionalContext
+		command, _ := result.HookSpecificOutput.UpdatedInput["command"].(string)
+		if !strings.HasSuffix(command, "\nprintf hello") || !strings.HasPrefix(command, "export AGENT_BUS_ID='claude-subagent-") {
+			t.Fatalf("unsafe or changed command: %s", command)
+		}
+		return command
+	}
+	first := rewrite("worker123", "", "Bash")
+	if first == "" || first != rewrite("worker123", "", "Bash") {
+		t.Fatal("worker identity not stable")
+	}
+	childID := strings.Split(first, "'")[1]
+	child := *e
+	child.ID = childID
+	writeJSON(sessionPath(childID), &child)
+	if rewrite("worker123", "", "Bash") != first || lastContext != "" {
+		t.Fatal("registered worker got unregistered guidance or changed identity")
+	}
+	if first == rewrite("worker456", "", "Bash") {
+		t.Fatal("siblings share identity")
+	}
+	fallback := rewrite("", "/parent/subagents/workflows/wf123/agent-abc.jsonl", "Bash")
+	if fallback == "" || fallback == rewrite("", "/parent/subagents/workflows/wf456/agent-abc.jsonl", "Bash") {
+		t.Fatal("workflow transcript fallback is not isolated")
+	}
+	if rewrite("worker123", "", "Read") != "" || rewrite("", "/parent.jsonl", "Bash") != "" {
+		t.Fatal("rewrote ordinary or non-Bash tool")
+	}
+	t.Setenv("AGENT_BUS_ID", "custom-parent'$(danger)")
+	if first == rewrite("worker123", "", "Bash") {
+		t.Fatal("inherited custom parent identity ignored")
 	}
 }
 

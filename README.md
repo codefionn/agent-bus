@@ -24,8 +24,8 @@ present are left alone, and the settings file keeps its key order.
 
 | Harness | Delivery | Installed to |
 |---|---|---|
-| Claude Code | `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PostToolUse` and `Stop` hooks | `~/.claude/settings.json` |
-| Codex | the same hooks | `~/.codex/hooks.json` |
+| Claude Code | `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse` and `Stop` hooks | `~/.claude/settings.json` |
+| Codex | `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PostToolUse` and `Stop` hooks | `~/.codex/hooks.json` |
 | pi | extension, runs the start and end hooks, polls every 3 s; steers into a running turn, queues for the next prompt when idle | `~/.pi/agent/extensions/agent-bus.ts` (a copy) |
 | opencode 2.x | plugin, treats the first tool call as the session start, appends messages to tool results | `~/.config/opencode/plugins/agent-bus.js` (a copy) |
 
@@ -75,6 +75,13 @@ Closing the session leaves the bus immediately, including for controllers.
 A wait that finishes after a final response does not reliably start a new
 turn. For other hook sessions, `Stop` continues the turn only when messages
 are queued. Subagent hooks leave the parent session's inbox alone.
+
+Claude's Bash `PreToolUse` hook gives each workflow worker or subagent its own
+`AGENT_BUS_ID`. Its bus commands operate on that identity, so registering or
+unregistering a worker leaves the parent session intact. Workers that need
+peer messages register their own name and fetch messages with `inbox` or
+`wait`. The hook preserves other Bash arguments and leaves main-agent
+commands unchanged.
 
 Each session also records how it receives messages. A hook registration
 delivers through hooks, a manual `register` delivers manually, and

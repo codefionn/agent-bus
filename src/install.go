@@ -61,12 +61,12 @@ func cmdInstall(args []string) {
 
 	at := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
 	if isDir(at(".claude")) {
-		mergeHooks(at(".claude", "settings.json"), bin)
+		mergeHooks(at(".claude", "settings.json"), bin, true)
 		fmt.Println("installed Claude Code hooks in " + at(".claude", "settings.json"))
 		addInstructions(at(".claude", "CLAUDE.md"))
 	}
 	if isDir(at(".codex")) {
-		mergeHooks(at(".codex", "hooks.json"), bin)
+		mergeHooks(at(".codex", "hooks.json"), bin, false)
 		fmt.Println("installed Codex hooks in " + at(".codex", "hooks.json"))
 		addInstructions(at(".codex", "AGENTS.md"))
 	}
@@ -155,7 +155,7 @@ var busHook = regexp.MustCompile(`agent-bus(\.exe)?"?\s+hook\b`)
 
 // mergeHooks adds our hooks to a Claude-style settings file unless an
 // agent-bus hook is already there. Keys keep their order.
-func mergeHooks(path, bin string) {
+func mergeHooks(path, bin string, withSubagentIsolation bool) {
 	command := bin
 	if runtime.GOOS == "windows" || strings.ContainsAny(bin, " \t") {
 		command = `"` + filepath.ToSlash(bin) + `"`
@@ -185,6 +185,10 @@ func mergeHooks(path, bin string) {
 	changed := false
 	addHooks := add.(*object).get("hooks").(*object)
 	for _, event := range addHooks.keys {
+		// Claude and Codex use different input-rewrite contracts.
+		if event == "PreToolUse" && !withSubagentIsolation {
+			continue
+		}
 		existing, _ := hooks.get(event).([]any)
 		if hasBusHook(existing) {
 			continue

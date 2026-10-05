@@ -2,6 +2,7 @@ package bus
 
 import (
 	"cmp"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -523,17 +524,20 @@ func finishWait(asJSON bool, status string, msgs []*message, text string) {
 //     hook was added after the session started, unless the session left the
 //     bus with agent-bus unregister.
 //   - Subagent hooks leave the parent session and its inbox alone.
+//     PreToolUse gives each subagent's Bash commands a separate bus identity.
 //   - Stop blocks when hook-delivered messages need attention or the session
 //     has role=controller metadata. Manual delivery never consumes the inbox.
 //
 // It stays silent when there is nothing to say.
 func cmdHook(args []string) {
 	var payload struct {
-		Event          string `json:"hook_event_name"`
-		SessionID      string `json:"session_id"`
-		Cwd            string `json:"cwd"`
-		AgentID        string `json:"agent_id"`
-		TranscriptPath string `json:"transcript_path"`
+		Event          string         `json:"hook_event_name"`
+		SessionID      string         `json:"session_id"`
+		Cwd            string         `json:"cwd"`
+		AgentID        string         `json:"agent_id"`
+		TranscriptPath string         `json:"transcript_path"`
+		ToolName       string         `json:"tool_name"`
+		ToolInput      map[string]any `json:"tool_input"`
 	}
 	data, _ := io.ReadAll(os.Stdin)
 	json.Unmarshal(data, &payload)
@@ -541,8 +545,33 @@ func cmdHook(args []string) {
 	// the subagent. Leave the parent's registration and inbox for its own hooks.
 	// Older payloads can identify the subagent only by its transcript path.
 	transcript := strings.ReplaceAll(payload.TranscriptPath, `\`, "/")
-	if payload.AgentID != "" || (strings.HasSuffix(transcript, ".jsonl") &&
-		strings.HasPrefix(filepath.Base(transcript), "agent-") && strings.Contains(transcript, "/subagents/")) {
+	subagent := payload.AgentID != "" || (strings.HasSuffix(transcript, ".jsonl") &&
+		strings.HasPrefix(filepath.Base(transcript), "agent-") && strings.Contains(transcript, "/subagents/"))
+	if subagent {
+		if payload.Event == "PreToolUse" && payload.ToolName == "Bash" {
+			if command, ok := payload.ToolInput["command"].(string); ok {
+				parent := os.Getenv("AGENT_BUS_ID")
+				if parent == "" {
+					parent = payload.SessionID
+				}
+				worker := payload.AgentID
+				if worker == "" {
+					worker = transcript
+				}
+				// Hex keeps the shell assignment safe even when harness ids contain
+				// quotes or shell syntax. Each worker gets a stable independent id.
+				id := fmt.Sprintf("claude-subagent-%x", sha256.Sum256([]byte(parent+"\x00"+worker)))
+				payload.ToolInput["command"] = "export AGENT_BUS_ID='" + id + "'\n" + command
+				output := map[string]any{
+					"hookEventName": "PreToolUse", "updatedInput": payload.ToolInput,
+				}
+				if !fileExists(sessionPath(id)) {
+					output["additionalContext"] = "This subagent has its own bus identity and is not registered. " +
+						"Run `agent-bus register NAME` before sending messages. Fetch your messages with `agent-bus inbox` or `agent-bus wait`."
+				}
+				printJSON(map[string]any{"hookSpecificOutput": output})
+			}
+		}
 		return
 	}
 	if payload.Event == "" {
