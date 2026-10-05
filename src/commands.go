@@ -661,8 +661,9 @@ func hookJoin(event, id string, candidates []string, sessionID, cwd string) {
 		text = fmt.Sprintf("%s on the agent bus as %s. Messages from other agent sessions on this machine arrive here on their own. "+
 			"`agent-bus list` shows who is active, `agent-bus send NAME MESSAGE` writes to one, "+
 			"and `agent-bus note TEXT` tells the others what you work on. "+
-			"Messages only arrive while you work, so when you expect one, run `agent-bus wait --timeout SECONDS` "+
-			"instead of ending your turn.", verb, e.Name)
+			"When you expect a reply or handoff, run `agent-bus wait --timeout 7200` in the background and keep the turn active. "+
+			"Give peers at least two hours unless the user sets a shorter deadline. Monitor the wait with short tool calls "+
+			"and restart it on timeout while the reply is still needed and the peer is active.", verb, e.Name)
 	}
 	if len(msgs) > 0 {
 		text += "\n\nMessages from other agent sessions (reply with agent-bus send NAME ...):\n" + render(msgs)
