@@ -28,7 +28,7 @@ Two ways to use the bus:
 
     hooks    The SessionStart hook registers every new session and the
              harness hook or plugin hands messages to the agent as they come.
-             SessionEnd takes the session off again. On while auto is on.
+             The session leaves when its harness exits. On while auto is on.
     manual   The agent runs agent-bus register itself. It receives messages
              by running agent-bus wait in the background, which returns with
              the next messages or when the session leaves, or by asking

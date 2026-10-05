@@ -2,7 +2,7 @@
  * agent-bus for pi: delivers messages from other agent sessions.
  *
  * On session start it runs the SessionStart hook, which registers the session
- * when agent-bus auto-register is on; shutdown takes it off the bus again.
+ * when agent-bus auto-register is on. The session leaves the bus when pi exits.
  * Then it polls `agent-bus hook` every few seconds. A message that arrives
  * while the agent works is steered into the running turn; one that arrives
  * while pi is idle waits for the next prompt and shows a notification.

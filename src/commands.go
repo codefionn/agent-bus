@@ -514,7 +514,10 @@ func finishWait(asJSON bool, status string, msgs []*message, text string) {
 //
 //   - SessionStart registers the session when auto-register is on (hooks mode)
 //     and tells the agent its bus name.
-//   - SessionEnd takes the session off the bus.
+//   - SessionEnd takes the session off the bus only when another session
+//     replaces it in the same harness (Claude Code's /clear and /resume).
+//     Otherwise the session stays until its harness process exits, so a
+//     harness that fires SessionEnd while it keeps running still gets messages.
 //   - Any other event follows the session into its current directory and hands
 //     unread messages to the model, if the session uses hooks delivery. It
 //     registers a session the SessionStart hook missed, for example because the
@@ -527,6 +530,7 @@ func cmdHook(args []string) {
 		Event     string `json:"hook_event_name"`
 		SessionID string `json:"session_id"`
 		Cwd       string `json:"cwd"`
+		Reason    string `json:"reason"`
 	}
 	data, _ := io.ReadAll(os.Stdin)
 	json.Unmarshal(data, &payload)
@@ -555,7 +559,7 @@ func cmdHook(args []string) {
 		hookSessionStart(id, candidates, payload.SessionID, payload.Cwd)
 		return
 	case "SessionEnd":
-		if id != "" {
+		if id != "" && (payload.Reason == "clear" || payload.Reason == "resume") {
 			locked(func() {
 				if e, ok := load[entry](sessionPath(id)); ok {
 					logEvent(newEvent("unregister", e))
@@ -656,7 +660,9 @@ func hookJoin(event, id string, candidates []string, sessionID, cwd string) {
 	} else {
 		text = fmt.Sprintf("%s on the agent bus as %s. Messages from other agent sessions on this machine arrive here on their own. "+
 			"`agent-bus list` shows who is active, `agent-bus send NAME MESSAGE` writes to one, "+
-			"and `agent-bus note TEXT` tells the others what you work on.", verb, e.Name)
+			"and `agent-bus note TEXT` tells the others what you work on. "+
+			"Messages only arrive while you work, so when you expect one, run `agent-bus wait --timeout SECONDS` "+
+			"instead of ending your turn.", verb, e.Name)
 	}
 	if len(msgs) > 0 {
 		text += "\n\nMessages from other agent sessions (reply with agent-bus send NAME ...):\n" + render(msgs)

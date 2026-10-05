@@ -62,10 +62,12 @@ func cmdInstall(args []string) {
 	at := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
 	if isDir(at(".claude")) {
 		mergeHooks(at(".claude", "settings.json"), bin)
+		fmt.Println("installed Claude Code hooks in " + at(".claude", "settings.json"))
 		addInstructions(at(".claude", "CLAUDE.md"))
 	}
 	if isDir(at(".codex")) {
 		mergeHooks(at(".codex", "hooks.json"), bin)
+		fmt.Println("installed Codex hooks in " + at(".codex", "hooks.json"))
 		addInstructions(at(".codex", "AGENTS.md"))
 	}
 	if isDir(at(".pi", "agent")) {
@@ -198,7 +200,6 @@ func mergeHooks(path, bin string) {
 	if err := writeAtomic(path, append(data, '\n')); err != nil {
 		die(1, "%v", err)
 	}
-	fmt.Println("hooks in " + path)
 }
 
 func hasBusHook(groups []any) bool {

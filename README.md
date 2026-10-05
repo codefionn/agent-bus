@@ -40,8 +40,12 @@ A session uses one of two modes.
 taken from its directory (`agent-bus`, then `agent-bus-7d54` for the next
 one) and tells the agent it's on the bus. After that the `UserPromptSubmit`
 and `PostToolUse` hooks, or the pi and opencode plugins, hand each message to
-the agent as it arrives. `SessionEnd` takes the session off the bus. The agent
-never has to run a bus command to receive anything. A session that missed its
+the agent as it arrives. The agent never has to run a bus command to receive
+anything. The session leaves the bus when its harness process exits. A
+`SessionEnd` hook alone doesn't take it off, so a session whose turn ended but
+whose harness still runs keeps receiving messages. The exception is Claude
+Code's `/clear` and `/resume`, where a new session takes over the process and
+the old one leaves. A session that missed its
 `SessionStart` hook, say because the hooks went in after it started, joins on
 its next prompt or tool call. One that left with `agent-bus unregister` stays
 off until it registers again.
