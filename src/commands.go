@@ -578,8 +578,10 @@ func finishWait(asJSON bool, status string, msgs []*message, text string) {
 //     bus with agent-bus unregister.
 //   - Subagent hooks leave the parent session and its inbox alone.
 //     PreToolUse gives each subagent's Bash commands a separate bus identity.
-//   - Stop blocks when hook-delivered messages need attention or the session
-//     has role=controller metadata. Manual delivery never consumes the inbox.
+//   - Stop blocks with an inbox notice when hook-delivered messages need
+//     attention, or when the session has role=controller metadata. It leaves
+//     message data for normal context delivery. Manual delivery never consumes
+//     the inbox.
 //   - With --rewake, an asynchronous Stop hook waits without consuming messages
 //     and exits 2 with a stderr notice so Claude wakes an idle conversation.
 //
@@ -707,11 +709,17 @@ func cmdHook(args []string) {
 			writeJSON(sessionPath(id), e)
 			logEvent(newEvent("move", e))
 		}
-		if e.Delivery != deliverManual {
+		if e.Delivery != deliverManual && payload.Event != "Stop" {
 			msgs = take(e, false)
 		}
 	})
 	text := ""
+	if payload.Event == "Stop" && deliver {
+		// Claude displays a Stop block reason as a hook error. Keep message
+		// contents, including untrusted data, out of that control signal.
+		// The next tool hook or inbox command delivers the queued messages.
+		text = "Peer messages are waiting. Run `agent-bus inbox` to receive them before finishing the turn."
+	}
 	if len(msgs) > 0 {
 		text = "Messages from other agent sessions (reply with agent-bus send NAME ...). " + trustNote + "\n" + render(msgs)
 	}
@@ -725,9 +733,6 @@ func cmdHook(args []string) {
 	}
 	if text != "" {
 		if payload.Event == "Stop" {
-			if len(msgs) > 0 {
-				text += "\n\nHandle these peer messages before trying to finish the turn."
-			}
 			printJSON(map[string]string{"decision": "block", "reason": text})
 		} else {
 			hookOutput(payload.Event, text)

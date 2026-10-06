@@ -333,14 +333,41 @@ func TestHookStop(t *testing.T) {
 				if err := json.Unmarshal([]byte(output), &result); err != nil || result.Decision != "block" || result.Reason == "" {
 					t.Fatalf("Stop did not block with a reason: %s", output)
 				}
-				if tc.unread && tc.delivery != deliverManual && !strings.Contains(result.Reason, "parent-only message") {
-					t.Error("Stop omitted pending message")
+				if tc.unread && tc.delivery != deliverManual && !strings.Contains(result.Reason, "agent-bus inbox") {
+					t.Error("Stop omitted inbox notice")
 				}
 			} else if output != "" {
 				t.Errorf("unexpected Stop output: %s", output)
 			}
-			if tc.delivery == deliverManual && tc.unread && len(inboxFiles(e.ID)) != 1 {
-				t.Error("Stop consumed manual inbox")
+			if tc.unread && len(inboxFiles(e.ID)) != 1 {
+				t.Error("Stop consumed inbox instead of leaving messages for context delivery")
+			}
+		})
+	}
+}
+
+func TestHookStopKeepsMessageContentOutOfBlockReason(t *testing.T) {
+	for _, untrusted := range []string{"", "unverified outside content"} {
+		t.Run(untrusted, func(t *testing.T) {
+			e := setupHookTest(t, deliverHooks)
+			os.RemoveAll(filepath.Join(inboxDir, e.ID))
+			locked(func() {
+				deliver(&entry{ID: "fixture-peer", Name: "fixture-peer"}, []*entry{e}, nil, "review this finding", untrusted)
+			})
+			output := runHookTest(t, map[string]string{"hook_event_name": "Stop", "session_id": e.ID})
+			var result struct{ Decision, Reason string }
+			if err := json.Unmarshal([]byte(output), &result); err != nil || result.Decision != "block" || !strings.Contains(result.Reason, "agent-bus inbox") {
+				t.Fatalf("Stop omitted inbox notice: %s", output)
+			}
+			if strings.Contains(result.Reason, "review this finding") || strings.Contains(result.Reason, "unverified outside content") || strings.Contains(result.Reason, "<untrusted-") || strings.Contains(result.Reason, trustNote) {
+				t.Fatalf("Stop put message data in its block reason: %s", output)
+			}
+			if len(inboxFiles(e.ID)) != 1 {
+				t.Fatal("Stop consumed queued message")
+			}
+			context := runHookTest(t, map[string]string{"hook_event_name": "PreToolUse", "session_id": e.ID})
+			if !strings.Contains(context, "review this finding") || (untrusted != "" && !strings.Contains(context, untrusted)) || len(inboxFiles(e.ID)) != 0 {
+				t.Fatalf("next hook did not deliver message as context: %s", context)
 			}
 		})
 	}
