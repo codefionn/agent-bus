@@ -349,16 +349,18 @@ func (s *webServer) events(w http.ResponseWriter, r *http.Request) {
 }
 
 // send delivers a message from the server's session. The body is JSON:
-// {"to": NAME} or {"scope": "all"|"dir"|"under"|"repo", "dir": DIR}, plus "text".
+// {"to": NAME} or {"scope": "all"|"dir"|"under"|"repo", "dir": DIR}, plus "text" and
+// optionally "untrusted", content relayed from outside the bus.
 func (s *webServer) send(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		To    string `json:"to"`
-		Scope string `json:"scope"`
-		Dir   string `json:"dir"`
-		Text  string `json:"text"`
+		To        string `json:"to"`
+		Scope     string `json:"scope"`
+		Dir       string `json:"dir"`
+		Text      string `json:"text"`
+		Untrusted string `json:"untrusted"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil || strings.TrimSpace(req.Text) == "" {
-		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "want JSON with text and to or scope"})
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil || strings.TrimSpace(req.Text) == "" && req.Untrusted == "" || len(req.Untrusted) > maxUntrusted {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "want JSON with text or untrusted (at most 256 KiB) and to or scope"})
 		return
 	}
 	var recipients []*entry
@@ -385,7 +387,7 @@ func (s *webServer) send(w http.ResponseWriter, r *http.Request) {
 					recipients = append(recipients, e)
 				}
 			}
-			deliver(sender, recipients, &label, req.Text)
+			deliver(sender, recipients, &label, req.Text, req.Untrusted)
 			return
 		}
 		e, err := resolve(active, req.To)
@@ -394,7 +396,7 @@ func (s *webServer) send(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		recipients = []*entry{e}
-		deliver(sender, recipients, nil, req.Text)
+		deliver(sender, recipients, nil, req.Text, req.Untrusted)
 	})
 	if sendErr != nil {
 		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": sendErr.Error()})

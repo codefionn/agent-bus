@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -131,6 +132,32 @@ func TestMergeHooksUpgradesStopWatcher(t *testing.T) {
 			}
 			if !bytes.Equal(first, second) {
 				t.Fatal("second merge changed settings")
+			}
+		})
+	}
+}
+
+func TestAddInstructionsReplacesSection(t *testing.T) {
+	want, _ := integrations.ReadFile("integrations/instructions.md")
+	for name, c := range map[string]struct{ before, after string }{
+		"middle": {"# Tools\n\nuse rg\n\n", "\n# Later\n\nkeep me\n"},
+		"end":    {"# Tools\n\nuse rg\n\n", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "AGENTS.md")
+			os.WriteFile(path, []byte(c.before+"# Agent bus\n\n- old advice\n"+c.after), 0o644)
+			addInstructions(path)
+			got, _ := os.ReadFile(path)
+			expect := c.before + string(want) + c.after
+			if c.after != "" {
+				expect = c.before + strings.TrimRight(string(want), "\n") + "\n\n" + strings.TrimPrefix(c.after, "\n")
+			}
+			if string(got) != expect {
+				t.Fatalf("got:\n%s\nwant:\n%s", got, expect)
+			}
+			addInstructions(path)
+			if again, _ := os.ReadFile(path); string(again) != string(got) {
+				t.Fatal("second install changed the file")
 			}
 		})
 	}

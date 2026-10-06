@@ -35,12 +35,13 @@ type event struct {
 	Delivery  string            `json:"delivery,omitempty"`
 	Note      string            `json:"note,omitempty"`
 	Meta      map[string]string `json:"meta,omitempty"`
-	To        []string          `json:"to,omitempty"`     // send: recipient names
-	ToIDs     []string          `json:"to_ids,omitempty"` // send: recipient ids
-	Scope     *string           `json:"scope,omitempty"`  // send: the SCOPE it went to
-	Text      string            `json:"text,omitempty"`   // send: the message
-	Count     int               `json:"count,omitempty"`  // read: messages taken from the inbox
-	Reason    string            `json:"reason,omitempty"` // drop: exited, idle or unreadable
+	To        []string          `json:"to,omitempty"`        // send: recipient names
+	ToIDs     []string          `json:"to_ids,omitempty"`    // send: recipient ids
+	Scope     *string           `json:"scope,omitempty"`     // send: the SCOPE it went to
+	Text      string            `json:"text,omitempty"`      // send: the message
+	Untrusted string            `json:"untrusted,omitempty"` // send: relayed content the recipient must not trust
+	Count     int               `json:"count,omitempty"`     // read: messages taken from the inbox
+	Reason    string            `json:"reason,omitempty"`    // drop: exited, idle or unreadable
 }
 
 func newEvent(typ string, e *entry) event {

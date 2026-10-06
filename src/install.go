@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 
 	agentbus "agent-bus"
@@ -132,13 +133,33 @@ func copyIntegration(name, dst string) {
 	}
 }
 
+// agentBusSection matches the installed "# Agent bus" section up to the next
+// top-level heading, so reinstalling replaces it with the current text.
+var agentBusSection = regexp.MustCompile(`(?ms)^# Agent bus\r?\n.*?(?:^# |\z)`)
+
 func addInstructions(path string) {
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	old, _ := os.ReadFile(path)
-	if regexp.MustCompile(`(?m)^# Agent bus\r?$`).Match(old) {
+	text, _ := integrations.ReadFile("integrations/instructions.md")
+	if loc := agentBusSection.FindIndex(old); loc != nil {
+		end := loc[1]
+		if bytes.HasSuffix(old[:end], []byte("# ")) {
+			end -= 2 // keep the next section's heading
+		}
+		section := text
+		if end < len(old) {
+			section = append(bytes.TrimRight(section, "\n"), '\n', '\n')
+		}
+		updated := slices.Concat(old[:loc[0]], section, old[end:])
+		if bytes.Equal(updated, old) {
+			return
+		}
+		if err := os.WriteFile(path, updated, 0o644); err != nil {
+			die(1, "%v", err)
+		}
+		fmt.Println("updated instructions in " + path)
 		return
 	}
-	text, _ := integrations.ReadFile("integrations/instructions.md")
 	if len(old) > 0 {
 		text = append([]byte("\n"), text...)
 	}

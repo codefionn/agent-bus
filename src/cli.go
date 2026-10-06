@@ -13,12 +13,16 @@ agent-bus note TEXT                       update your status line
 agent-bus id [SESSION]                    print or set the harness's session id for this session
 agent-bus meta [KEY=VALUE]...             print or set metadata; KEY= removes KEY
 agent-bus list [SCOPE] [--json]           active sessions with directory and branch
-agent-bus send (NAME | SCOPE) MESSAGE...  message one session or every session in SCOPE
+agent-bus send (NAME | SCOPE) [--untrusted TEXT | --untrusted-file PATH|-] MESSAGE...
+                                          message one session or every session in SCOPE;
+                                          --untrusted marks relayed outside content
 agent-bus inbox [--peek] [--json]         print the messages not received yet
 agent-bus wait [--timeout SECONDS] [--json]
                                           block until messages arrive (exit 0), the session
                                           leaves the bus (exit 3) or the timeout passes (exit 1)
 agent-bus auto [on | off]                 show or set whether hooks register new sessions
+agent-bus run [LIMITS] -- COMMAND [ARG...] wait for resources, then run a bounded command
+                                          see agent-bus run --help for limits
 agent-bus whoami
 agent-bus unregister
 agent-bus hook                            hook and plugin entry (reads a Claude Code hook payload)
@@ -85,6 +89,7 @@ var commands = map[string]func([]string){
 	"wait":       cmdWait,
 	"hook":       cmdHook,
 	"install":    cmdInstall,
+	"run":        cmdRun,
 }
 
 func die(code int, format string, args ...any) {

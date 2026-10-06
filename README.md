@@ -29,8 +29,9 @@ present are left alone, and the settings file keeps its key order.
 | pi | extension, runs the start and end hooks, polls every 3 s; steers into a running turn, queues for the next prompt when idle | `~/.pi/agent/extensions/agent-bus.ts` (a copy) |
 | opencode 2.x | plugin, treats the first tool call as the session start, appends messages to tool results | `~/.config/opencode/plugins/agent-bus.js` (a copy) |
 
-It also appends an "Agent bus" section from `integrations/instructions.md` to
-each harness's global instructions file.
+It also writes an "Agent bus" section from `integrations/instructions.md` into
+each harness's global instructions file. Running `install` again replaces that
+section with the current text and leaves the rest of the file alone.
 
 ## Modes
 
@@ -109,6 +110,7 @@ agent-bus list --repo --json        # every worktree of this repository, as JSON
 agent-bus send jit-fix "done with target/, it's yours"
 agent-bus send --repo "rebasing main in 5 minutes"
 agent-bus send --under ~/Documents/prog/oximond/crates "touching oximond-vm"
+agent-bus send reviewer --untrusted-file issue.txt "issue 412 as filed, triage it"
 agent-bus inbox
 agent-bus wait                      # block until a message arrives or you leave the bus
 ```
@@ -116,6 +118,17 @@ agent-bus wait                      # block until a message arrives or you leave
 For larger reports, logs, or handoffs, write a file in a shared project
 directory and send its absolute path with a short summary and requested
 action. Keep the file available until the recipient has used it.
+
+Message text counts as trusted: it comes from another agent session of the
+same user. Content from outside, such as a web page, an issue body, an email
+or a third-party tool's output, goes in `--untrusted TEXT` or
+`--untrusted-file PATH` (`-` reads stdin, up to 256 KiB). The recipient sees
+it inside a `<untrusted-...>` block whose tag ends in a random suffix, so the
+content cannot close the block and pass itself off as trusted text. The
+installed instructions and the hook context tell agents to treat that block
+as data and never follow instructions in it, because it may carry prompt
+injections. `inbox --json` and `wait --json` return it under `untrusted`, and
+`POST /api/send` accepts the same field.
 
 Run `agent-bus` with no arguments for the full usage. Scopes:
 
@@ -133,6 +146,58 @@ peer can reach a session under the same id after its agent restarts.
 `--meta KEY=VALUE` and `agent-bus meta KEY=VALUE...` attach free-form metadata,
 such as a ticket or PR number. `KEY=` removes a key. `list` prints the pairs
 and `list --json` puts them under `meta`.
+
+## Resource limits
+
+Use `run` to queue a command until its concurrency group and memory request
+fit, then run it with the chosen limits. It can wrap a whole agent session
+or a single expensive command.
+
+```sh
+# Serialize builds across sessions on this bus.
+agent-bus run --mutex builds -- cargo build
+
+# Allow two jobs in this group, with an 8 GiB memory cap per job.
+agent-bus run --mutex tests --max-processes 2 --max-ram 8GiB -- cargo test
+
+# Pin an agent to CPUs 0-3, allow two CPUs of sustained work,
+# and stop it after 30 minutes of accumulated CPU time.
+agent-bus run --cpus 0-3 --cpu-quota 200% --max-cpu-time 30m \
+  --max-ram 12GiB --keep-free-ram 4GiB -- claude
+```
+
+`--mutex NAME` defaults to one running command. `--max-processes N` changes
+that group's capacity. Without a mutex name it uses the global group.
+All members of a group must use the same capacity. `--max-tasks N` is a
+separate Linux limit on OS tasks, including threads, in the command tree.
+On Linux, mutex groups also use a systemd scope when the user manager is
+available, so an orphaned child keeps its slot until it exits.
+
+`--max-ram` is a hard limit on the command and its descendants. It also
+defaults the memory reservation to that amount. `--reserve-ram` overrides
+the admission estimate, or requests memory without a hard cap. The scheduler
+checks available RAM and other jobs' unused reservations, leaving
+`--keep-free-ram` available, 1 GiB by default. Reservations apply across all
+mutex groups that use the same `AGENT_BUS_DIR`. A request larger than the
+machine can accommodate fails immediately. A temporary shortage waits until
+running jobs finish or memory becomes available. `--wait-timeout 10m` bounds
+that wait. Interrupting a queued command cancels its request.
+
+Linux uses user systemd scopes and cgroup v2 to enforce memory, CPU pinning,
+CPU quotas and task limits across descendants. `--cpu-quota 100%` allows one
+CPU worth of sustained work. `--max-cpu-time 30m` counts total CPU time
+across the command tree, including parallel workers. It excludes time spent
+waiting in the queue and sleeping. Enforcement samples CPU usage every
+100 milliseconds, so parallel workers can exceed the budget by the work
+done between samples and during termination. Remaining
+descendants are stopped when the wrapped command exits.
+
+Hard resource limits require Linux with a working user systemd manager and
+the relevant cgroup controllers. Unsupported limits fail rather than
+silently running without protection. Named concurrency groups also work on
+other platforms. Existing sessions are unaffected; launch them through
+`run` to apply limits. These controls do not remove files left in `/tmp`.
+Use disk-backed scratch storage and clean up temporary files as well.
 
 ## Web view
 

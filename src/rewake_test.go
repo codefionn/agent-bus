@@ -88,7 +88,7 @@ func TestHookRewakeIdleDeliveryAndDuplicates(t *testing.T) {
 		t.Fatal("duplicate replaced live watcher")
 	}
 	locked(func() {
-		deliver(&entry{ID: "fixture-peer", Name: "fixture-peer"}, []*entry{e}, nil, "idle fixture message")
+		deliver(&entry{ID: "fixture-peer", Name: "fixture-peer"}, []*entry{e}, nil, "idle fixture message", "")
 	})
 	finishRewake(t, cmd, output, 2)
 	if len(inboxFiles(e.ID)) != 1 {

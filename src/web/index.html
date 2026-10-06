@@ -57,6 +57,8 @@ section > h2 .grow { flex: 1; }
 .ev.quiet .body { color: var(--muted); }
 .ev.send .text { background: var(--msg); border-radius: 8px; padding: 6px 10px; margin-top: 3px; white-space: pre-wrap; }
 .ev.tome .text { background: var(--mine); }
+.ev.send .text.untrusted { background: none; border: 1px dashed var(--warn); font: 12px var(--mono); }
+.ev.send .text.untrusted::before { content: "untrusted content"; display: block; font: 11px var(--mono); color: var(--warn); margin-bottom: 3px; }
 .filters { display: flex; gap: 10px; align-items: center; font-size: 12px; text-transform: none; letter-spacing: 0; color: var(--muted); }
 .filters label { display: flex; gap: 4px; align-items: center; }
 form { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; }
@@ -482,7 +484,9 @@ function renderEvent(ev, i) {
       head.append(who((ev.to_ids || [])[j] || n, n));
     });
     if (ev.scope) head.append(el("span", "small", "  (" + ev.scope + ")"));
-    body.append(head, el("div", "text", ev.text));
+    body.append(head);
+    if (ev.text) body.append(el("div", "text", ev.text));
+    if (ev.untrusted) body.append(el("div", "text untrusted", ev.untrusted));
   } else {
     const [text, quiet] = describe(ev);
     if (quiet) row.classList.add("quiet");
