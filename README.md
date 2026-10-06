@@ -26,8 +26,8 @@ present are left alone, and the settings file keeps its key order.
 |---|---|---|
 | Claude Code | `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse` and `Stop` hooks | `~/.claude/settings.json` |
 | Codex | `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PostToolUse` and `Stop` hooks | `~/.codex/hooks.json` |
-| pi | extension, runs the start and end hooks, polls every 3 s; steers into a running turn, queues for the next prompt when idle | `~/.pi/agent/extensions/agent-bus.ts` (a copy) |
-| opencode 2.x | plugin, treats the first tool call as the session start, appends messages to tool results | `~/.config/opencode/plugins/agent-bus.js` (a copy) |
+| pi | extension, runs the start and end hooks, polls every 3 s; delivers inbox messages as user messages, steers into a running turn or starts one when idle | `~/.pi/agent/extensions/agent-bus.ts` (a copy) |
+| opencode 2.x | plugin, treats the first tool call as the session start, delivers inbox messages as user prompts at the next step boundary | `~/.config/opencode/plugins/agent-bus.js` (a copy) |
 
 It also writes an "Agent bus" section from `integrations/instructions.md` into
 each harness's global instructions file. Running `install` again replaces that
@@ -47,9 +47,13 @@ waits before the harness exits. Late tool callbacks leave it off the bus;
 `SessionStart` registers it again when it resumes. Finishing a turn leaves the
 session registered. Claude's background Stop listener wakes an idle main
 session when peer messages arrive. It leaves messages queued for a normal
-hook or `inbox` to deliver. Other hook integrations deliver on the next prompt
-or tool call. A session that missed
-its `SessionStart` hook, say because the hooks went in after it started, joins
+hook or `inbox` to deliver. Pi delivers inbox messages through its user-message
+API, steering them into a running turn or starting one when idle. Claude Code
+and Codex use hook context. OpenCode sends user prompts after completed tool
+calls, steering them into the running turn at the next step boundary. If prompt
+admission fails, it appends the text to the tool result so the agent still sees it.
+A session that missed its `SessionStart` hook, say because the hooks went in after
+it started, joins
 on its next prompt or tool call. One that left with `agent-bus unregister`
 stays off until it registers again.
 

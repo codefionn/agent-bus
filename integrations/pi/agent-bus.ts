@@ -5,7 +5,7 @@
  * when agent-bus auto-register is on. The session leaves the bus when pi exits.
  * Then it polls `agent-bus hook` every few seconds. A message that arrives
  * while the agent works is steered into the running turn; one that arrives
- * while pi is idle waits for the next prompt and shows a notification.
+ * while pi is idle starts a new turn. Inbox messages use the user role.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -48,10 +48,8 @@ export default function (pi: ExtensionAPI) {
         const text = await poll(ctx.cwd);
         if (!text) return;
         const idle = ctx.isIdle();
-        pi.sendMessage(
-          { customType: "agent-bus", content: text, display: true },
-          { deliverAs: idle ? "nextTurn" : "steer" },
-        );
+        if (idle) pi.sendUserMessage(text);
+        else pi.sendUserMessage(text, { deliverAs: "steer" });
         if (idle) ctx.ui.notify("agent-bus: new message from another session", "info");
       } finally {
         busy = false;
