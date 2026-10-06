@@ -215,6 +215,19 @@ session id, metadata and note, and a feed of what happens. The feed shows
 registrations, notes, id and metadata changes, directory moves, messages with
 their text, inbox reads, and sessions dropping off.
 
+The runs panel refreshes every three seconds. It shows queued and running
+commands, their owner, resource requests and limits, and the last 100 finished
+runs with exit codes. Run history starts with commands launched by the updated
+`agent-bus` binary and survives web server restarts.
+
+Commands are censored before they enter shared run history, and again when the
+web API serves them. Redaction checks credential flags and assignments,
+sensitive environment values, URL credentials, common API key patterns, and
+high-entropy tokens. Inline shell scripts and evaluation code are hidden.
+Entropy checks also hide some hashes and random IDs. Redaction is a heuristic
+and cannot reliably detect every unnamed, low-entropy secret. Command execution
+uses the original arguments. Command output is not collected or shown.
+
 The session list is grouped by folder. Click a session to see only its
 traffic, with each message marked as going out or coming in, plus its sent and
 received counts. Click a folder heading to see the traffic of every session in

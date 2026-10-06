@@ -184,7 +184,21 @@ func parseRunOptions(args []string, out io.Writer) (runOptions, error) {
 	return opts, nil
 }
 
-func runManagedCommand(ctx context.Context, opts runOptions) (int, error) {
+func runManagedCommand(ctx context.Context, opts runOptions) (code int, runErr error) {
+	record := newRunRecord(opts)
+	_ = saveRun(record)
+	defer func() {
+		record.Finished = now()
+		record.ExitCode = &code
+		record.Status = "completed"
+		if code != 0 || runErr != nil {
+			record.Status = "failed"
+		}
+		if ctx.Err() != nil || errors.Is(runErr, context.Canceled) {
+			record.Status = "canceled"
+		}
+		_ = saveRun(record)
+	}()
 	if err := prepareRunPlatform(&opts.limits); err != nil {
 		return 1, err
 	}
@@ -195,6 +209,8 @@ func runManagedCommand(ctx context.Context, opts runOptions) (int, error) {
 	if opts.limits.TreeScope || opts.limits.TrackMemory || opts.limits.MaxRAM > 0 || opts.limits.CPUs != "" || opts.limits.CPUQuota > 0 || opts.limits.MaxCPUTime > 0 || opts.limits.MaxTasks > 0 {
 		opts.request.Unit = fmt.Sprintf("agent-bus-run-%d-%s.scope", os.Getpid(), hex.EncodeToString(token[:]))
 	}
+	record.Request = opts.request
+	_ = saveRun(record)
 	waitCtx := ctx
 	cancel := func() {}
 	if opts.waitTimeout > 0 {
@@ -217,7 +233,11 @@ func runManagedCommand(ctx context.Context, opts runOptions) (int, error) {
 		return 1, err
 	}
 	cancel()
-	code, runErr := executeResourceCommand(ctx, opts.argv, opts.limits, opts.request.Unit, lease.SetCgroup)
+	record.Status = "running"
+	record.Started = now()
+	record.ResourceID = lease.id
+	_ = saveRun(record)
+	code, runErr = executeResourceCommand(ctx, opts.argv, opts.limits, opts.request.Unit, lease.SetCgroup)
 	if runErr != nil && code == 0 {
 		code = 1
 		if errors.Is(runErr, context.Canceled) {

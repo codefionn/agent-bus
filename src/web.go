@@ -140,6 +140,7 @@ func Web(args []string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.HandleFunc("GET /api/sessions", s.sessions)
+	mux.HandleFunc("GET /api/runs", s.runs)
 	mux.HandleFunc("GET /api/events", s.events)
 	mux.HandleFunc("POST /api/send", s.send)
 	srv := &http.Server{Handler: s.guard(mux), ReadHeaderTimeout: 10 * time.Second}
@@ -284,6 +285,20 @@ func (s *webServer) sessions(w http.ResponseWriter, r *http.Request) {
 		"self":     s.id,
 		"sessions": listing(byRegistration(active), s.id),
 	})
+}
+
+func (s *webServer) runs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	runs, err := listRuns()
+	if err != nil {
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "could not read run history"})
+		return
+	}
+	// Reapply current rules to records saved by an older binary.
+	for i := range runs {
+		runs[i].Command = redactRunArgs(runs[i].Command)
+	}
+	writeJSONResponse(w, http.StatusOK, map[string]any{"runs": runs})
 }
 
 // events streams bus events as server-sent events. ?session=ID,NAME,... keeps
