@@ -3,7 +3,7 @@
 This is a local agent message bus compatible with *any* coding agent.
 
 A message bus for the coding agent sessions on one machine: Claude Code,
-Codex, opencode and pi. It runs on Linux, macOS and Windows. Sessions register under a name. Anyone can ask the
+Codex, opencode, pi and Smelt. It runs on Linux, macOS and Windows. Sessions register under a name. Anyone can ask the
 registry who is active, in which directory, on which branch. Registered
 sessions can message one session or a group of them.
 
@@ -28,6 +28,11 @@ present are left alone, and the settings file keeps its key order.
 | Codex | `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PostToolUse` and `Stop` hooks | `~/.codex/hooks.json` |
 | pi | extension, runs the start and end hooks, polls every 3 s; delivers inbox messages as user messages, steers into a running turn or starts one when idle | `~/.pi/agent/extensions/agent-bus.ts` (a copy) |
 | opencode 2.x | plugin, treats the first tool call as the session start, delivers inbox messages as user prompts at the next step boundary | `~/.config/opencode/plugins/agent-bus.js` (a copy) |
+| Smelt | Lua plugin, registers on session start and polls every 3 s; starts a turn when idle or queues messages behind an active turn | `~/.config/smelt/plugins/agent-bus.lua` (a copy) |
+
+Smelt's config directory follows `XDG_CONFIG_HOME` when set. On Windows,
+it defaults to `%APPDATA%/smelt`. The installer adds the plugin and an
+`AGENTS.md` section when that directory exists.
 
 It also writes an "Agent bus" section from `integrations/instructions.md` into
 each harness's global instructions file. Running `install` again replaces that
@@ -40,7 +45,7 @@ A session uses one of two modes.
 **Hooks.** The `SessionStart` hook registers every new session under a name
 taken from its directory (`agent-bus`, then `agent-bus-7d54` for the next
 one) and tells the agent it's on the bus. After that the `UserPromptSubmit`
-and `PostToolUse` hooks, or the pi and opencode plugins, hand each message to
+and `PostToolUse` hooks, or the pi, opencode and Smelt plugins, hand each message to
 the agent as it arrives. The agent never has to run a bus command to receive
 anything. `SessionEnd` removes the session immediately and wakes background
 waits before the harness exits. Late tool callbacks leave it off the bus;
@@ -48,7 +53,9 @@ waits before the harness exits. Late tool callbacks leave it off the bus;
 session registered. Claude's background Stop listener wakes an idle main
 session when peer messages arrive. It leaves messages queued for a normal
 hook or `inbox` to deliver. Pi delivers inbox messages through its user-message
-API, steering them into a running turn or starting one when idle. Claude Code
+API, steering them into a running turn or starting one when idle.
+Smelt submits inbox messages as commands, starting a turn when idle or queuing
+them behind the active turn. Claude Code
 and Codex use hook context. OpenCode sends user prompts after completed tool
 calls, steering them into the running turn at the next step boundary. If prompt
 admission fails, it appends the text to the tool result so the agent still sees it.

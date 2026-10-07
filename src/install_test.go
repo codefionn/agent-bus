@@ -4,11 +4,107 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestSmeltConfigDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("APPDATA", filepath.Join(home, "roaming"))
+	want := filepath.Join(home, ".config", "smelt")
+	if runtime.GOOS == "windows" {
+		want = filepath.Join(home, "roaming", "smelt")
+	}
+	if got := smeltConfigDir(home); got != want {
+		t.Fatalf("default config = %q, want %q", got, want)
+	}
+	xdg := filepath.Join(home, "custom-config")
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	if got := smeltConfigDir(home); got != filepath.Join(xdg, "smelt") {
+		t.Fatalf("XDG config = %q", got)
+	}
+}
+
+func TestInstallSmelt(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "smelt")
+	installSmelt(config)
+	if isDir(config) {
+		t.Fatal("created config for an absent harness")
+	}
+	if err := os.MkdirAll(filepath.Join(config, "plugins"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	instructions := filepath.Join(config, "AGENTS.md")
+	plugin := filepath.Join(config, "plugins", "agent-bus.lua")
+	if err := os.WriteFile(instructions, []byte("# My rules\n\nUse rg.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plugin, []byte("-- old integration\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installSmelt(config)
+	want, err := integrations.ReadFile("integrations/smelt/agent-bus.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(plugin)
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("installed plugin differs from embedded plugin: %v", err)
+	}
+	first, err := os.ReadFile(instructions)
+	if err != nil || !bytes.HasPrefix(first, []byte("# My rules\n\nUse rg.\n")) || bytes.Count(first, []byte("# Agent bus\n")) != 1 {
+		t.Fatalf("existing instructions lost or bus section missing: %s (%v)", first, err)
+	}
+	installSmelt(config)
+	second, err := os.ReadFile(instructions)
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatalf("reinstall changed instructions: %v", err)
+	}
+}
+
+func TestHarnessOfSmelt(t *testing.T) {
+	for _, p := range []proc{
+		{name: "smelt", args: []string{"smelt"}},
+		{name: "smelt.exe", args: []string{`C:\\bin\\smelt.exe`}},
+		{name: "smelt-release", args: []string{"/usr/local/bin/smelt"}},
+	} {
+		if got := harnessOf(&p); got != "smelt" {
+			t.Fatalf("harnessOf(%+v) = %q", p, got)
+		}
+	}
+}
+
+func TestSmeltSessionIdentity(t *testing.T) {
+	setupHookTest(t, deliverHooks)
+	t.Setenv("AGENT_BUS_ID", "")
+	t.Setenv("SMELT_SESSION_ID", "smelt-session")
+	t.Setenv("CODEX_THREAD_ID", "outer-codex-session")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(exe, "-test.run=^TestHookProcess$")
+	cmd.Args[0] = "smelt"
+	cmd.Env = append(os.Environ(), "BUS_HOOK_TEST_PROCESS=harness", "BUS_HOOK_TEST_COMMAND=register", "AGENT_BUS_DIR="+root)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("register from Smelt: %v\n%s", err, out)
+	}
+	e, ok := load[entry](sessionPath("smelt-session"))
+	if !ok {
+		t.Fatal("Smelt session was not registered")
+	}
+	if e.Harness != "smelt" || e.SessionID != "smelt-session" {
+		t.Fatalf("wrong Smelt registration: %+v", e)
+	}
+	if fileExists(sessionPath("outer-codex-session")) {
+		t.Fatal("Smelt used the outer Codex session identity")
+	}
+}
 
 func TestMergeHooksSubagentIsolation(t *testing.T) {
 	for _, tc := range []struct {

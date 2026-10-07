@@ -19,8 +19,8 @@ import (
 var integrations = agentbus.Integrations
 
 // cmdInstall copies this binary to ~/.local/bin and wires it into every
-// harness found: Claude Code and Codex hooks, a pi extension, an opencode
-// plugin, and the "Agent bus" section in each harness's global instructions.
+// harness found: Claude Code and Codex hooks, a pi extension, opencode and Smelt
+// plugins, and the "Agent bus" section in each harness's global instructions.
 // Safe to rerun.
 func cmdInstall(args []string) {
 	home, err := os.UserHomeDir()
@@ -81,6 +81,30 @@ func cmdInstall(args []string) {
 		fmt.Println("installed opencode plugin")
 		addInstructions(at(".config", "opencode", "AGENTS.md"))
 	}
+	installSmelt(smeltConfigDir(home))
+}
+
+// Smelt uses XDG_CONFIG_HOME on every platform, with APPDATA as the Windows fallback.
+func smeltConfigDir(home string) string {
+	if config := os.Getenv("XDG_CONFIG_HOME"); config != "" {
+		return filepath.Join(config, "smelt")
+	}
+	if runtime.GOOS == "windows" {
+		if config := os.Getenv("APPDATA"); config != "" {
+			return filepath.Join(config, "smelt")
+		}
+		return filepath.Join(home, "AppData", "Roaming", "smelt")
+	}
+	return filepath.Join(home, ".config", "smelt")
+}
+
+func installSmelt(config string) {
+	if !isDir(config) {
+		return
+	}
+	copyIntegration("integrations/smelt/agent-bus.lua", filepath.Join(config, "plugins", "agent-bus.lua"))
+	fmt.Println("installed Smelt plugin")
+	addInstructions(filepath.Join(config, "AGENTS.md"))
 }
 
 func fileExists(path string) bool {

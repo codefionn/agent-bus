@@ -13,7 +13,7 @@ type proc struct {
 	args      []string
 }
 
-var harnessNames = map[string]string{"claude": "claude", "codex": "codex", "opencode": "opencode", ".opencode": "opencode", "pi": "pi"}
+var harnessNames = map[string]string{"claude": "claude", "codex": "codex", "opencode": "opencode", ".opencode": "opencode", "pi": "pi", "smelt": "smelt"}
 
 func baseName(path string) string {
 	if i := strings.LastIndexAny(path, `/\`); i >= 0 {

@@ -323,7 +323,7 @@ func cleanID(s string) string { return unsafeID.ReplaceAllString(s, "_") }
 // The nearest harness ancestor decides; its own session variable names the
 // session. A harness launched from another one inherits the outer harness's
 // variables, so only the variable matching the nearest harness counts.
-var sessionVars = map[string]string{"claude": "CLAUDE_CODE_SESSION_ID", "codex": "CODEX_THREAD_ID", "opencode": "OPENCODE_SESSION_ID"}
+var sessionVars = map[string]string{"claude": "CLAUDE_CODE_SESSION_ID", "codex": "CODEX_THREAD_ID", "opencode": "OPENCODE_SESSION_ID", "smelt": "SMELT_SESSION_ID"}
 
 func identity() (id, harness string, owner *proc, err error) {
 	harness, owner = findHarness()
@@ -337,7 +337,7 @@ func identity() (id, harness string, owner *proc, err error) {
 		id = v
 	}
 	if id == "" || owner == nil {
-		return "", "", nil, errors.New("not running inside Claude Code, Codex, opencode or pi; set AGENT_BUS_ID to join from a plain shell")
+		return "", "", nil, errors.New("not running inside Claude Code, Codex, opencode, pi or Smelt; set AGENT_BUS_ID to join from a plain shell")
 	}
 	return cleanID(id), harness, owner, nil
 }

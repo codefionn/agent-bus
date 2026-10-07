@@ -1,5 +1,5 @@
 # Build agent-bus, copy it to ~/.local/bin and wire it into every harness found:
-# Claude Code and Codex hooks, a pi extension, an opencode plugin, and the
+# Claude Code and Codex hooks, a pi extension, opencode and Smelt plugins, and the
 # "Agent bus" section in each harness's global instructions. Safe to rerun.
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
