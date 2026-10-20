@@ -27,6 +27,7 @@ agent-bus whoami
 agent-bus unregister
 agent-bus hook                            hook and plugin entry (reads a Claude Code hook payload)
 agent-bus install [--auto | --manual]     copy agent-bus to ~/.local/bin and wire up every harness found
+agent-bus uninstall                       remove agent-bus from ~/.local/bin and unwire every harness
 
 Two ways to use the bus:
 
@@ -89,6 +90,7 @@ var commands = map[string]func([]string){
 	"wait":       cmdWait,
 	"hook":       cmdHook,
 	"install":    cmdInstall,
+	"uninstall":  cmdUninstall,
 	"run":        cmdRun,
 }
 
@@ -103,7 +105,7 @@ func Main(args []string) {
 		fmt.Fprintln(os.Stderr, strings.TrimSpace(usage))
 		os.Exit(2)
 	}
-	if args[0] != "install" {
+	if args[0] != "install" && args[0] != "uninstall" {
 		setup()
 	}
 	commands[args[0]](args[1:])

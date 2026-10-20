@@ -107,6 +107,93 @@ func installSmelt(config string) {
 	addInstructions(filepath.Join(config, "AGENTS.md"))
 }
 
+// cmdUninstall removes the installed binaries and unwires every harness:
+// Claude Code and Codex hooks, the pi extension, opencode and Smelt plugins, and
+// the "Agent bus" section in each harness's global instructions. The rest of
+// each file is left alone. Safe to rerun.
+func cmdUninstall(args []string) {
+	if len(args) > 0 {
+		die(2, "usage: agent-bus uninstall")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		die(1, "%v", err)
+	}
+	binDir := filepath.Join(home, ".local", "bin")
+	removeBinary(filepath.Join(binDir, exeName))
+	// agent-bus-web travelled along when it was built next to agent-bus.
+	removeBinary(filepath.Join(binDir, strings.Replace(exeName, "agent-bus", "agent-bus-web", 1)))
+
+	at := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
+	if isDir(at(".claude")) {
+		if unmergeHooks(at(".claude", "settings.json")) {
+			fmt.Println("removed Claude Code hooks from " + at(".claude", "settings.json"))
+		}
+		removeInstructions(at(".claude", "CLAUDE.md"))
+	}
+	if isDir(at(".codex")) {
+		if unmergeHooks(at(".codex", "hooks.json")) {
+			fmt.Println("removed Codex hooks from " + at(".codex", "hooks.json"))
+		}
+		removeInstructions(at(".codex", "AGENTS.md"))
+	}
+	if isDir(at(".pi", "agent")) {
+		removeFile(at(".pi", "agent", "extensions", "agent-bus.ts"), "pi extension")
+		removeInstructions(at(".pi", "agent", "AGENTS.md"))
+	}
+	if isDir(at(".config", "opencode")) {
+		removeFile(at(".config", "opencode", "plugins", "agent-bus.js"), "opencode plugin")
+		removeInstructions(at(".config", "opencode", "AGENTS.md"))
+	}
+	uninstallSmelt(smeltConfigDir(home))
+	if dir := filepath.Dir(configPath()); isDir(dir) {
+		if err := os.RemoveAll(dir); err != nil {
+			die(1, "remove %s: %v", dir, err)
+		}
+		fmt.Println("removed settings in " + dir)
+	}
+}
+
+func uninstallSmelt(config string) {
+	if !isDir(config) {
+		return
+	}
+	removeFile(filepath.Join(config, "plugins", "agent-bus.lua"), "Smelt plugin")
+	removeInstructions(filepath.Join(config, "AGENTS.md"))
+}
+
+// removeBinary deletes an installed binary and reports what went away. Windows
+// cannot delete a running executable but can rename it, so one that is still
+// running moves aside to be deleted after it exits.
+func removeBinary(path string) {
+	if !fileExists(path) {
+		return
+	}
+	if err := os.Remove(path); err != nil {
+		if runtime.GOOS != "windows" {
+			die(1, "remove %s: %v", path, err)
+		}
+		os.Remove(path + ".old")
+		if err := os.Rename(path, path+".old"); err != nil {
+			die(1, "remove %s: %v", path, err)
+		}
+		fmt.Println("moved " + path + " to " + path + ".old, delete it after agent-bus exits")
+		return
+	}
+	fmt.Println("removed " + path)
+}
+
+// removeFile deletes a file install copied in and reports the label it went by.
+func removeFile(path, label string) {
+	if err := os.Remove(path); err != nil {
+		if !os.IsNotExist(err) {
+			die(1, "remove %s: %v", path, err)
+		}
+		return
+	}
+	fmt.Println("removed " + label)
+}
+
 func fileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
@@ -196,6 +283,45 @@ func addInstructions(path string) {
 	fmt.Println("instructions in " + path)
 }
 
+// removeInstructions drops the installed "# Agent bus" section and reports
+// whether it changed anything. The rest of the file is left alone; a file that
+// held nothing else goes away.
+func removeInstructions(path string) bool {
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	loc := agentBusSection.FindIndex(old)
+	if loc == nil {
+		return false
+	}
+	end := loc[1]
+	if bytes.HasSuffix(old[:end], []byte("# ")) {
+		end -= 2 // keep the next section's heading
+	}
+	head, tail := old[:loc[0]], old[end:]
+	if len(bytes.TrimSpace(tail)) == 0 {
+		tail = nil // the section ran to the end of the file
+		head = bytes.TrimRight(head, "\r\n")
+		if len(head) > 0 {
+			head = append(head, '\n')
+		}
+	}
+	updated := slices.Concat(head, tail)
+	if len(bytes.TrimSpace(updated)) == 0 {
+		if err := os.Remove(path); err != nil {
+			die(1, "remove %s: %v", path, err)
+		}
+		fmt.Println("removed instructions in " + path)
+		return true
+	}
+	if err := os.WriteFile(path, updated, 0o644); err != nil {
+		die(1, "%v", err)
+	}
+	fmt.Println("removed instructions in " + path)
+	return true
+}
+
 var busHook = regexp.MustCompile(`agent-bus(\.exe)?"?\s+hook\b`)
 
 // mergeHooks adds missing agent-bus hooks. Keys keep their order.
@@ -283,6 +409,90 @@ func hasBusHookWithArgs(groups []any, args string) bool {
 	return false
 }
 
+// unmergeHooks drops the agent-bus hooks from a harness settings file and
+// reports whether it changed anything. The other hooks and the key order stay.
+func unmergeHooks(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil || len(bytes.TrimSpace(data)) == 0 {
+		return false
+	}
+	cur, err := parseOrdered(data)
+	if err != nil {
+		die(1, "%s: %v", path, err)
+	}
+	settings, ok := cur.(*object)
+	if !ok {
+		die(1, "%s: not a JSON object", path)
+	}
+	hooks, _ := settings.get("hooks").(*object)
+	if hooks == nil {
+		return false
+	}
+	changed := false
+	for _, event := range slices.Clone(hooks.keys) {
+		groups, _ := hooks.get(event).([]any)
+		kept := make([]any, 0, len(groups))
+		for _, g := range groups {
+			group, ok := g.(*object)
+			if !ok {
+				kept = append(kept, g)
+				continue
+			}
+			list, _ := group.get("hooks").([]any)
+			keptHooks := make([]any, 0, len(list))
+			for _, h := range list {
+				if isBusHook(h) {
+					changed = true
+					continue
+				}
+				keptHooks = append(keptHooks, h)
+			}
+			if len(keptHooks) == 0 && len(list) > 0 {
+				changed = true
+				continue // the group held nothing but agent-bus
+			}
+			if len(keptHooks) != len(list) {
+				group.set("hooks", keptHooks)
+			}
+			kept = append(kept, group)
+		}
+		if len(kept) == 0 {
+			if len(groups) > 0 {
+				hooks.del(event)
+			}
+			continue
+		}
+		hooks.set(event, kept)
+	}
+	if !changed {
+		return false
+	}
+	if len(hooks.keys) == 0 {
+		settings.del("hooks")
+	}
+	if len(settings.keys) == 0 {
+		// The file held nothing but our hooks.
+		if err := os.Remove(path); err != nil {
+			die(1, "remove %s: %v", path, err)
+		}
+		return true
+	}
+	data, _ = json.MarshalIndent(settings, "", "  ")
+	if err := writeAtomic(path, append(data, '\n')); err != nil {
+		die(1, "%v", err)
+	}
+	return true
+}
+
+func isBusHook(h any) bool {
+	ho, _ := h.(*object)
+	if ho == nil {
+		return false
+	}
+	cmd, _ := ho.get("command").(string)
+	return busHook.MatchString(cmd)
+}
+
 // object is a JSON object that remembers key order, so rewriting a user's
 // settings file only adds what we add.
 type object struct {
@@ -300,6 +510,14 @@ func (o *object) set(k string, v any) {
 		o.keys = append(o.keys, k)
 	}
 	o.vals[k] = v
+}
+
+func (o *object) del(k string) {
+	if _, ok := o.vals[k]; !ok {
+		return
+	}
+	delete(o.vals, k)
+	o.keys = slices.DeleteFunc(o.keys, func(key string) bool { return key == k })
 }
 
 func (o *object) MarshalJSON() ([]byte, error) {

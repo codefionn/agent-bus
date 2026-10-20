@@ -38,6 +38,27 @@ It also writes an "Agent bus" section from `integrations/instructions.md` into
 each harness's global instructions file. Running `install` again replaces that
 section with the current text and leaves the rest of the file alone.
 
+## Uninstall
+
+```sh
+./uninstall.sh      # Linux, macOS
+.\uninstall.ps1     # Windows
+```
+
+The script builds `cmd/agent-bus` and runs `agent-bus uninstall`. That removes
+both binaries from `~/.local/bin` and unwires every harness: the hooks in
+`~/.claude/settings.json` and `~/.codex/hooks.json`, the pi extension, the
+opencode and Smelt plugins, and the "Agent bus" section in each harness's global
+instructions file. Everything else in those files is left alone, and a file that
+held nothing but the section goes away. It also drops the settings that
+`install --auto` and `agent-bus auto` saved, under `~/.config/agent-bus` or the
+platform's config directory. It's safe to rerun.
+
+State in `AGENT_BUS_DIR` is left alone, so sessions still running keep their
+registrations and messages; it empties itself after the 12-hour TTL.
+
+Without this directory or Go, `~/.local/bin/agent-bus uninstall` does the same.
+
 ## Modes
 
 A session uses one of two modes.

@@ -258,3 +258,157 @@ func TestAddInstructionsReplacesSection(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoveInstructions(t *testing.T) {
+	for name, c := range map[string]struct{ before, after, want string }{
+		"middle": {"# Tools\n\nuse rg\n\n", "\n# Later\n\nkeep me\n", "# Tools\n\nuse rg\n\n# Later\n\nkeep me\n"},
+		"end":    {"# Tools\n\nuse rg\n\n", "", "# Tools\n\nuse rg\n"},
+		"only":   {"", "", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "AGENTS.md")
+			if err := os.WriteFile(path, []byte(c.before+"# Agent bus\n\n- old advice\n"+c.after), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if !removeInstructions(path) {
+				t.Fatal("left the section in the file")
+			}
+			got, err := os.ReadFile(path)
+			if c.want == "" {
+				if err == nil {
+					t.Fatalf("left %q behind", got)
+				}
+			} else if err != nil || string(got) != c.want {
+				t.Fatalf("got:\n%s\nwant:\n%s (%v)", got, c.want, err)
+			}
+			if removeInstructions(path) {
+				t.Fatal("second run changed the file")
+			}
+		})
+	}
+}
+
+func TestUnmergeHooks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	original := []byte(`{"permissions":{"allow":["Bash(go test:*)"]},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/home/u/.local/bin/agent-bus hook","timeout":5}]},{"hooks":[{"type":"command","command":"custom-start-hook"}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"/home/u/.local/bin/agent-bus hook"}]}],"Stop":[{"hooks":[{"type":"command","command":"custom-stop-hook"},{"type":"command","command":"/home/u/.local/bin/agent-bus hook --rewake","asyncRewake":true,"timeout":604800}]}]},"model":"custom-model"}`)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !unmergeHooks(path) {
+		t.Fatal("did not remove the agent-bus hooks")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parseOrdered(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := parsed.(*object)
+	if !reflect.DeepEqual(settings.keys, []string{"permissions", "hooks", "model"}) {
+		t.Fatalf("settings keys changed: %s", data)
+	}
+	if !reflect.DeepEqual(settings.get("permissions"), mustJSON(`{"allow":["Bash(go test:*)"]}`)) {
+		t.Fatalf("existing settings changed: %s", data)
+	}
+	hooks := settings.get("hooks").(*object)
+	if !reflect.DeepEqual(hooks.keys, []string{"SessionStart", "Stop"}) {
+		t.Fatalf("hook events changed: %s", data)
+	}
+	start := hooks.get("SessionStart").([]any)
+	if len(start) != 1 || start[0].(*object).get("hooks").([]any)[0].(*object).get("command") != "custom-start-hook" {
+		t.Fatalf("the custom SessionStart hook did not survive: %s", data)
+	}
+	stop := hooks.get("Stop").([]any)[0].(*object).get("hooks").([]any)
+	if len(stop) != 1 || stop[0].(*object).get("command") != "custom-stop-hook" {
+		t.Fatalf("the mixed Stop group lost its custom hook: %s", data)
+	}
+	if unmergeHooks(path) {
+		t.Fatal("second run reported a change")
+	}
+	if again, _ := os.ReadFile(path); !bytes.Equal(again, data) {
+		t.Fatal("second run rewrote the file")
+	}
+}
+
+func TestUnmergeHooksRemovesEmptySettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	if err := os.WriteFile(path, []byte(`{"hooks":{"SessionEnd":[{"hooks":[{"type":"command","command":"agent-bus hook"}]}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !unmergeHooks(path) {
+		t.Fatal("did not remove the agent-bus hooks")
+	}
+	if fileExists(path) {
+		t.Fatal("left an empty settings file behind")
+	}
+	if unmergeHooks(path) {
+		t.Fatal("second run reported a change")
+	}
+}
+
+func TestRemoveBinary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent-bus")
+	if err := os.WriteFile(path, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	removeBinary(path)
+	if fileExists(path) {
+		t.Fatal("binary is still there")
+	}
+	removeBinary(path) // absent: not an error
+}
+
+func TestCmdUninstall(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("APPDATA", filepath.Join(home, "roaming"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	at := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
+	write := func(path, content string) string {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	bin := write(at(".local", "bin", exeName), "binary")
+	web := write(at(".local", "bin", strings.Replace(exeName, "agent-bus", "agent-bus-web", 1)), "web")
+	settings := write(at(".claude", "settings.json"), `{"model":"custom","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"custom-hook"},{"type":"command","command":"agent-bus hook"}]}]}}`)
+	claude := write(at(".claude", "CLAUDE.md"), "# Tools\n\nuse rg\n\n# Agent bus\n\n- old advice\n")
+	codex := write(at(".codex", "hooks.json"), `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"agent-bus hook"}]}]}}`)
+	pi := write(at(".pi", "agent", "extensions", "agent-bus.ts"), "extension")
+	open := write(at(".config", "opencode", "plugins", "agent-bus.js"), "plugin")
+	smelt := write(filepath.Join(smeltConfigDir(home), "plugins", "agent-bus.lua"), "plugin")
+	config := write(configPath(), `{"auto":false}`)
+
+	cmdUninstall(nil)
+
+	for _, p := range []string{bin, web, codex, pi, open, smelt, config} {
+		if fileExists(p) {
+			t.Fatal(p + " still exists")
+		}
+	}
+	if isDir(filepath.Dir(config)) {
+		t.Fatal("left the settings directory behind")
+	}
+	got, err := os.ReadFile(settings)
+	if err != nil || strings.Contains(string(got), "agent-bus") || !strings.Contains(string(got), "custom-hook") {
+		t.Fatalf("Claude settings lost or kept hooks: %s (%v)", got, err)
+	}
+	if md, err := os.ReadFile(claude); err != nil || string(md) != "# Tools\n\nuse rg\n" {
+		t.Fatalf("CLAUDE.md = %q (%v)", md, err)
+	}
+}
+
+func mustJSON(text string) any {
+	v, err := parseOrdered([]byte(text))
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
